@@ -1,0 +1,19 @@
+[package]
+name = "wharfnet"
+version = "0.1.0"
+edition = "2024"
+description = "One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more"
+authors = ["Sainath <Sainath@hashiraworks.com>"]
+license = "MIT"
+repository = "https://github.com/sainathr19/wharfnet"
+homepage = "https://github.com/sainathr19/wharfnet"
+readme = "README.md"
+keywords = ["localnet", "devnet", "blockchain", "testing", "web3"]
+categories = ["development-tools", "command-line-utilities"]
+
+[[bin]]
+name = "wharfnet"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
