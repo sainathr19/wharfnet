@@ -2,6 +2,7 @@
 
 mod docker;
 mod engine;
+mod faucet;
 mod manifest;
 mod orchestrator;
 mod ui;
@@ -28,13 +29,18 @@ enum Commands {
     Compose,
     /// Fund an address from the built-in faucet.
     Faucet {
-        /// Target chain (e.g. evm, solana, starknet).
+        /// Target chain — a kind (e.g. `evm`) to fund every matching chain, or a
+        /// specific chain name (e.g. `anvil-1`).
         chain: String,
         /// Recipient address.
         address: String,
-        /// Amount to send (chain-native units).
+        /// Amount in whole units (ETH, or whole tokens scaled by their decimals).
         #[arg(default_value_t = 100)]
         amount: u64,
+        /// Fund only this token (e.g. `USDC`). Omit to fund the native coin and
+        /// every bundled token.
+        #[arg(long)]
+        token: Option<String>,
     },
     /// Deploy the pre-baked test tokens and contracts.
     Deploy,
@@ -59,9 +65,8 @@ fn run(command: Commands) -> anyhow::Result<()> {
             chain,
             address,
             amount,
-        } => anyhow::bail!(
-            "faucet not yet implemented — would send {amount} on {chain} to {address}"
-        ),
+            token,
+        } => faucet::run(&chain, &address, amount, token.as_deref()),
         Commands::Deploy => anyhow::bail!("deploy not yet implemented"),
     }
 }
@@ -90,10 +95,32 @@ mod tests {
                 chain,
                 address,
                 amount,
+                token,
             } => {
                 assert_eq!(chain, "evm");
                 assert_eq!(address, "0xabc");
                 assert_eq!(amount, 500);
+                assert_eq!(token, None);
+            }
+            _ => panic!("expected faucet command"),
+        }
+    }
+
+    #[test]
+    fn parses_faucet_with_token_flag() {
+        let cli =
+            Cli::try_parse_from(["wharfnet", "faucet", "anvil-1", "0xabc", "50", "--token", "USDC"])
+                .unwrap();
+        match cli.command {
+            Commands::Faucet {
+                chain,
+                token,
+                amount,
+                ..
+            } => {
+                assert_eq!(chain, "anvil-1");
+                assert_eq!(amount, 50);
+                assert_eq!(token.as_deref(), Some("USDC"));
             }
             _ => panic!("expected faucet command"),
         }
@@ -116,16 +143,6 @@ mod tests {
     #[test]
     fn run_compose_is_ok() {
         assert!(run(Commands::Compose).is_ok());
-    }
-
-    #[test]
-    fn run_faucet_is_unimplemented_error() {
-        let err = run(Commands::Faucet {
-            chain: "evm".into(),
-            address: "0x0".into(),
-            amount: 1,
-        });
-        assert!(err.is_err());
     }
 
     #[test]

@@ -18,18 +18,18 @@ use crate::engine::{Engine, EvmEngine};
 use crate::manifest::Manifest;
 use crate::ui;
 
-const DEFAULT_PROJECT: &str = "wharfnet";
-const DEFAULT_STATE_DIR: &str = ".wharfnet";
+pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
+pub(crate) const DEFAULT_STATE_DIR: &str = ".wharfnet";
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Header prepended to every generated compose file (embedded at compile time).
 const COMPOSE_HEADER: &str = include_str!("resources/docker/compose.header.yml");
 
-fn compose_path(base: &Path) -> PathBuf {
+pub(crate) fn compose_path(base: &Path) -> PathBuf {
     base.join("docker-compose.yml")
 }
 
-fn manifest_path(base: &Path) -> PathBuf {
+pub(crate) fn manifest_path(base: &Path) -> PathBuf {
     base.join("wharfnet.json")
 }
 

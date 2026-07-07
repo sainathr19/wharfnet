@@ -37,8 +37,11 @@ wharfnet up
 # check what's running
 wharfnet status
 
-# fund an address
+# fund an address with native coin + every bundled token, on all EVM chains
 wharfnet faucet evm 0xabc... 100
+
+# fund just one token, on a specific chain
+wharfnet faucet anvil-1 0xabc... 100 --token USDC
 
 # deploy the bundled test tokens
 wharfnet deploy
