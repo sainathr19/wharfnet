@@ -1,2 +1,9 @@
 /target
 .wharfnet/
+
+# Foundry build artifacts (the token sources compile inside a container; these
+# only appear if you run `forge` in src/resources/contracts/ directly).
+src/resources/contracts/out/
+src/resources/contracts/cache/
+src/resources/contracts/broadcast/
+src/resources/contracts/lib/

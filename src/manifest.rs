@@ -21,6 +21,9 @@ pub struct ChainEntry {
     pub rpc: String,
     pub chain_id: u64,
     pub accounts: Vec<Account>,
+    /// Test tokens pre-deployed on this chain at known addresses.
+    #[serde(default)]
+    pub tokens: Vec<Token>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -28,6 +31,16 @@ pub struct Account {
     pub address: String,
     pub private_key: String,
     pub balance: String,
+}
+
+/// A test token pre-deployed on a chain. `mint` is public so the faucet can
+/// top up any address.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Token {
+    pub symbol: String,
+    pub name: String,
+    pub address: String,
+    pub decimals: u8,
 }
 
 impl Manifest {
@@ -70,6 +83,12 @@ mod tests {
                 private_key: "0xdef".into(),
                 balance: "10000 ETH".into(),
             }],
+            tokens: vec![Token {
+                symbol: "USDC".into(),
+                name: "USD Coin".into(),
+                address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".into(),
+                decimals: 6,
+            }],
         }])
     }
 
@@ -92,6 +111,24 @@ mod tests {
         assert_eq!(loaded.chains[0].name, "anvil-1");
         assert_eq!(loaded.chains[0].chain_id, 31337);
         assert_eq!(loaded.chains[0].accounts[0].address, "0xabc");
+        assert_eq!(loaded.chains[0].tokens[0].symbol, "USDC");
+        assert_eq!(loaded.chains[0].tokens[0].decimals, 6);
+    }
+
+    #[test]
+    fn tokens_default_to_empty_when_absent() {
+        // Older manifests written before tokens existed must still parse.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.json");
+        std::fs::write(
+            &path,
+            r#"{"version":"0.1","project":"wharfnet","chains":[
+                {"name":"anvil-1","kind":"evm","rpc":"http://127.0.0.1:8545",
+                 "chain_id":31337,"accounts":[]}]}"#,
+        )
+        .unwrap();
+        let loaded = Manifest::read(&path).unwrap();
+        assert!(loaded.chains[0].tokens.is_empty());
     }
 
     #[test]

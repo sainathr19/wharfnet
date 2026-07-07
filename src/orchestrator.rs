@@ -53,6 +53,22 @@ fn render_compose(engines: &[Box<dyn Engine>]) -> String {
     out
 }
 
+/// Write each engine's staged files (chain snapshots, etc.) under the state
+/// dir before boot. Engines that share a snapshot write identical bytes to the
+/// same path, so this is idempotent.
+fn stage_files(base: &Path, engines: &[Box<dyn Engine>]) -> Result<()> {
+    for engine in engines {
+        for file in engine.staged_files() {
+            let dest = base.join(file.rel_path);
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dest, file.contents)?;
+        }
+    }
+    Ok(())
+}
+
 /// Print the generated compose file to stdout without booting anything.
 /// Useful for inspecting or debugging what wharfnet will run.
 pub fn print_compose() -> Result<()> {
@@ -78,6 +94,7 @@ fn up_in(base: &Path, project: &str) -> Result<()> {
 
     fs::create_dir_all(base)?;
     fs::write(compose_path(base), render_compose(&engines))?;
+    stage_files(base, &engines)?;
 
     println!("⚓ wharfnet: booting {} chain(s)...", engines.len());
 
@@ -118,6 +135,9 @@ fn up_in(base: &Path, project: &str) -> Result<()> {
             "   {} [{}]  {}  (chainId {})",
             chain.name, chain.kind, chain.rpc, chain.chain_id
         );
+        for token in &chain.tokens {
+            println!("      {:<5} {}", token.symbol, token.address);
+        }
     }
     println!("\nTear down with: wharfnet down");
     Ok(())
@@ -160,6 +180,12 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
         println!("     chainId  {}", chain.chain_id);
         if let Some(account) = chain.accounts.first() {
             println!("     account  {}", account.address);
+        }
+        for token in &chain.tokens {
+            println!(
+                "     token    {:<5} {} ({} dec)",
+                token.symbol, token.address, token.decimals
+            );
         }
         println!();
     }
@@ -211,7 +237,7 @@ fn rpc_ready(port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{Account, ChainEntry};
+    use crate::manifest::{Account, ChainEntry, Token};
     use std::io::{Read as _, Write as _};
     use std::net::TcpListener;
     use tempfile::tempdir;
@@ -250,6 +276,17 @@ mod tests {
     }
 
     #[test]
+    fn stage_files_writes_the_token_snapshot() {
+        let dir = tempdir().unwrap();
+        stage_files(dir.path(), &engines()).unwrap();
+        let snapshot = dir.path().join("state/anvil-tokens.json");
+        assert!(snapshot.exists(), "snapshot should be staged under state/");
+        let data = fs::read_to_string(&snapshot).unwrap();
+        // Sanity: the snapshot really contains our deployed USDC address.
+        assert!(data.contains("5fbdb2315678afecb367f032d93f642f64180aa3"));
+    }
+
+    #[test]
     fn paths_are_joined_under_base() {
         let base = Path::new("/tmp/whatever");
         assert_eq!(
@@ -277,6 +314,12 @@ mod tests {
                 address: "0xabc".into(),
                 private_key: "0xdef".into(),
                 balance: "10000 ETH".into(),
+            }],
+            tokens: vec![Token {
+                symbol: "USDC".into(),
+                name: "USD Coin".into(),
+                address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".into(),
+                decimals: 6,
             }],
         }]);
         manifest.write(&manifest_path(dir.path())).unwrap();

@@ -47,6 +47,21 @@ wharfnet deploy
 wharfnet down
 ```
 
+## Test tokens
+
+Every EVM chain boots with standard test tokens pre-deployed at fixed addresses
+(identical on all chains) from a baked-in Anvil state snapshot — no deploy step
+required. Each has a **public `mint(address,uint256)`** so a faucet (or your
+tests) can top up any address on demand:
+
+| Token | Decimals | Address |
+| ----- | -------- | ------- |
+| USDC  | 6        | `0x5FbDB2315678afecb367f032d93F642f64180aa3` |
+| WBTC  | 8        | `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512` |
+
+The dev accounts start pre-seeded with a balance of each. Regenerate the
+snapshot after editing the token sources with `./scripts/gen-token-state.sh`.
+
 ## Status
 
 This repository currently contains the project scaffold and CLI skeleton.
