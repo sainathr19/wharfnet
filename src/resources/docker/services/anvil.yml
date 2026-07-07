@@ -1,0 +1,7 @@
+  {{NAME}}:
+    image: {{IMAGE}}
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--port", "{{PORT}}", "--chain-id", "{{CHAIN_ID}}", "--block-time", "1"]
+    ports:
+      - "{{HOST_PORT}}:{{PORT}}"
+    restart: unless-stopped

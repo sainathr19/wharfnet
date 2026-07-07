@@ -1,0 +1,123 @@
+//! The endpoints manifest — the single machine-readable description of a
+//! running localnet. Tests and tooling read this to discover RPC URLs, chain
+//! IDs, and funded accounts. This is the generalized successor to a
+//! hand-maintained `deployments.json`.
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Manifest {
+    pub version: String,
+    pub project: String,
+    pub chains: Vec<ChainEntry>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChainEntry {
+    pub name: String,
+    pub kind: String,
+    pub rpc: String,
+    pub chain_id: u64,
+    pub accounts: Vec<Account>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Account {
+    pub address: String,
+    pub private_key: String,
+    pub balance: String,
+}
+
+impl Manifest {
+    pub fn new(chains: Vec<ChainEntry>) -> Self {
+        Manifest {
+            version: "0.1".to_string(),
+            project: "wharfnet".to_string(),
+            chains,
+        }
+    }
+
+    pub fn write(&self, path: &Path) -> Result<()> {
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, json)
+            .with_context(|| format!("writing manifest to {}", path.display()))?;
+        Ok(())
+    }
+
+    pub fn read(path: &Path) -> Result<Manifest> {
+        let data = std::fs::read_to_string(path)
+            .with_context(|| format!("reading manifest from {}", path.display()))?;
+        let manifest = serde_json::from_str(&data).context("parsing manifest")?;
+        Ok(manifest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn sample() -> Manifest {
+        Manifest::new(vec![ChainEntry {
+            name: "anvil-1".into(),
+            kind: "evm".into(),
+            rpc: "http://127.0.0.1:8545".into(),
+            chain_id: 31337,
+            accounts: vec![Account {
+                address: "0xabc".into(),
+                private_key: "0xdef".into(),
+                balance: "10000 ETH".into(),
+            }],
+        }])
+    }
+
+    #[test]
+    fn new_sets_version_and_project() {
+        let m = sample();
+        assert_eq!(m.version, "0.1");
+        assert_eq!(m.project, "wharfnet");
+        assert_eq!(m.chains.len(), 1);
+    }
+
+    #[test]
+    fn write_then_read_roundtrips() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wharfnet.json");
+        sample().write(&path).unwrap();
+        assert!(path.exists());
+
+        let loaded = Manifest::read(&path).unwrap();
+        assert_eq!(loaded.chains[0].name, "anvil-1");
+        assert_eq!(loaded.chains[0].chain_id, 31337);
+        assert_eq!(loaded.chains[0].accounts[0].address, "0xabc");
+    }
+
+    #[test]
+    fn read_missing_file_errors() {
+        let dir = tempdir().unwrap();
+        assert!(Manifest::read(&dir.path().join("absent.json")).is_err());
+    }
+
+    #[test]
+    fn write_to_nonexistent_dir_errors() {
+        let bad = Path::new("/this/path/does/not/exist/wharfnet.json");
+        assert!(sample().write(bad).is_err());
+    }
+
+    #[test]
+    fn read_invalid_json_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(Manifest::read(&path).is_err());
+    }
+
+    #[test]
+    fn serializes_to_pretty_json() {
+        let json = serde_json::to_string_pretty(&sample()).unwrap();
+        assert!(json.contains("\"project\": \"wharfnet\""));
+        assert!(json.contains("\"chain_id\": 31337"));
+    }
+}
