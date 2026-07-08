@@ -47,6 +47,16 @@ pub struct ChainConfig {
     /// Block time in seconds (auto-mining interval).
     #[serde(default = "default_block_time")]
     pub block_time: u64,
+    /// Fork this chain from a live RPC (Anvil `--fork-url`). `${VAR}` references
+    /// are expanded from the environment on load, so an RPC key can stay out of
+    /// the file. A forked chain mirrors real chain state instead of the baked
+    /// test tokens.
+    #[serde(default)]
+    pub fork_url: Option<String>,
+    /// Pin the fork to a block height (Anvil `--fork-block-number`). Requires
+    /// `fork_url`.
+    #[serde(default)]
+    pub fork_block: Option<u64>,
 }
 
 impl Default for Config {
@@ -59,6 +69,8 @@ impl Default for Config {
                     port: 8545,
                     chain_id: 31337,
                     block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
                 },
                 ChainConfig {
                     name: "anvil-2".to_string(),
@@ -66,6 +78,8 @@ impl Default for Config {
                     port: 8546,
                     chain_id: 31338,
                     block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
                 },
             ],
         }
@@ -103,10 +117,46 @@ pub fn load_from(path: &Path) -> Result<Config> {
     }
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let config: Config = toml::from_str(&text)
+    let mut config: Config = toml::from_str(&text)
         .with_context(|| format!("parsing {} — check the TOML syntax", path.display()))?;
+    resolve_env(&mut config)?;
     validate(&config)?;
     Ok(config)
+}
+
+/// Expand `${VAR}` references in fork URLs from the environment, so an RPC key
+/// never has to live in the file.
+fn resolve_env(config: &mut Config) -> Result<()> {
+    for c in &mut config.chains {
+        if let Some(url) = &c.fork_url {
+            c.fork_url = Some(
+                expand_env(url)
+                    .with_context(|| format!("chain '{}': resolving fork_url", c.name))?,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Substitute every `${VAR}` in `input` with the environment value, erroring on
+/// an unterminated `${` or an unset variable.
+fn expand_env(input: &str) -> Result<String> {
+    let mut out = String::new();
+    let mut rest = input;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let end = after
+            .find('}')
+            .ok_or_else(|| anyhow::anyhow!("unterminated '${{' in '{input}'"))?;
+        let var = &after[..end];
+        let val = std::env::var(var)
+            .map_err(|_| anyhow::anyhow!("environment variable '{var}' is not set"))?;
+        out.push_str(&val);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 /// Reject configs that would produce a broken or unsupported localnet.
@@ -138,6 +188,9 @@ fn validate(config: &Config) -> Result<()> {
         }
         if !ids.insert(c.chain_id) {
             bail!("duplicate chain_id {}", c.chain_id);
+        }
+        if c.fork_block.is_some() && c.fork_url.is_none() {
+            bail!("chain '{}': fork_block needs a fork_url to pin", c.name);
         }
     }
     Ok(())
@@ -214,6 +267,76 @@ mod tests {
         // kind + block_time defaulted.
         assert_eq!(c.chains[0].kind, "evm");
         assert_eq!(c.chains[0].block_time, 1);
+    }
+
+    #[test]
+    fn parses_fork_fields() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "mainnet-fork"
+            port = 8545
+            chain_id = 1
+            fork_url = "https://rpc.example/key"
+            fork_block = 21000000
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(
+            c.chains[0].fork_url.as_deref(),
+            Some("https://rpc.example/key")
+        );
+        assert_eq!(c.chains[0].fork_block, Some(21000000));
+    }
+
+    #[test]
+    fn fork_url_without_fork_defaults_to_none() {
+        let c = Config::default();
+        assert!(c.chains[0].fork_url.is_none());
+        assert!(c.chains[0].fork_block.is_none());
+    }
+
+    #[test]
+    fn fork_block_without_url_is_rejected() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "a"
+            port = 8545
+            chain_id = 1
+            fork_block = 123
+            "#,
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("fork_block needs a fork_url"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn fork_url_expands_env_vars() {
+        // Use PATH, which is always set, so the test needs no env mutation.
+        let path_val = std::env::var("PATH").unwrap();
+        let expanded = expand_env("https://rpc/${PATH}/x").unwrap();
+        assert_eq!(expanded, format!("https://rpc/{path_val}/x"));
+        // No placeholder is a passthrough.
+        assert_eq!(
+            expand_env("https://rpc/plain").unwrap(),
+            "https://rpc/plain"
+        );
+    }
+
+    #[test]
+    fn fork_url_errors_on_unset_env_var() {
+        let err = expand_env("${WHARFNET_DEFINITELY_UNSET_VAR_XYZ}").unwrap_err();
+        assert!(err.to_string().contains("is not set"), "{err}");
+        let err = expand_env("${UNTERMINATED").unwrap_err();
+        assert!(err.to_string().contains("unterminated"), "{err}");
     }
 
     #[test]

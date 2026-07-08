@@ -197,6 +197,7 @@ mod tests {
             }],
             tokens: vec![],
             contracts: vec![],
+            fork: None,
             explorer: None,
         }
     }

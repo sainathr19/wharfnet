@@ -213,6 +213,7 @@ mod tests {
                 decimals: 6,
             }],
             contracts: vec![],
+            fork: None,
             explorer: None,
         }
     }
