@@ -2,7 +2,8 @@
 
 **One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.**
 
-> ⚠️ Early WIP. The CLI surface is scaffolded; command implementations are landing incrementally.
+> ⚠️ Early WIP. The EVM stack — chains, test tokens, faucet, explorer, and
+> persistence — works today; Solana and Starknet are next.
 
 `wharfnet` is the local harbor for your chains: boot EVM, Solana, and Starknet
 networks locally with a single command, fund accounts from a unified faucet,
@@ -17,15 +18,29 @@ time they need a local environment. `wharfnet` packages that stitching into one
 opinionated, reproducible tool so you can `up` a whole multi-chain stack and
 test against it locally or in CI.
 
-## Planned scope (v1)
+## Status & roadmap
 
-- **Chains:** 2 EVM chains, Solana, Starknet
-- **Faucet:** one API to fund accounts on every chain
-- **Test tokens:** standard ERC-20 / SPL / Cairo tokens pre-deployed at known addresses
-- **Endpoints manifest:** a single machine-readable file of RPC URLs, chain IDs, and addresses
-- **CI integration:** spin up, wait-for-ready, and tear down from a pipeline
+Early WIP, but the **EVM stack works end to end today**. See the
+[CHANGELOG](./CHANGELOG.md) for details.
 
-## Quickstart (target UX)
+**Working now**
+
+- [x] Two EVM chains (Anvil) — `anvil-1` (:8545), `anvil-2` (:8546)
+- [x] Unified faucet — native coin + every token, or a single token via `--token`
+- [x] Pre-deployed ERC-20 test tokens (USDC, WBTC) at fixed addresses, public `mint`
+- [x] Block explorer (Otterscan) per EVM chain, on by default
+- [x] Persistent state — `up --resume` / `up --reset`
+- [x] Endpoints manifest — `.wharfnet/wharfnet.json`
+- [x] Boot waits for readiness; `down` tears it all down (CI-friendly)
+
+**Planned**
+
+- [ ] Solana chain — validator, faucet, SPL tokens
+- [ ] Starknet chain — devnet, faucet, Cairo tokens
+- [ ] `deploy` command — deploy bundled/custom contracts on demand
+- [ ] CI polish — machine-readable `status --json`, non-interactive mode
+
+## Quickstart
 
 ```sh
 # build
@@ -52,7 +67,7 @@ wharfnet faucet evm 0xabc... 100
 # fund just one token, on a specific chain
 wharfnet faucet anvil-1 0xabc... 100 --token USDC
 
-# deploy the bundled test tokens
+# deploy bundled/custom contracts (planned — not yet implemented)
 wharfnet deploy
 
 # shut everything down
@@ -113,13 +128,6 @@ When you'd rather pick up where you left off:
 Under the hood each chain dumps its state to a per-chain snapshot
 (`.wharfnet/state/session-<chain>.json`) via Anvil's `--state`, flushed on exit
 and periodically while running. `--resume` and `--reset` are mutually exclusive.
-
-## Status
-
-This repository currently contains the project scaffold and CLI skeleton.
-Engine wrappers (EVM / Solana / Starknet), the faucet, token presets, and the
-CI helper are in progress. See the [CHANGELOG](./CHANGELOG.md) for what's landed
-so far.
 
 ## License
 
