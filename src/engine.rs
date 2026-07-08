@@ -78,6 +78,36 @@ pub trait Engine {
     }
 }
 
+/// Fork settings for an Anvil chain: mirror a live network's state from `url`,
+/// optionally pinned to a block height.
+struct Fork {
+    url: String,
+    block: Option<u64>,
+}
+
+impl Fork {
+    /// A redacted description safe to record and print — the RPC key is dropped.
+    fn describe(&self) -> String {
+        let source = redact_url(&self.url);
+        match self.block {
+            Some(block) => format!("{source} @ block {block}"),
+            None => format!("{source} @ latest"),
+        }
+    }
+}
+
+/// Keep only `scheme://host` from a URL, dropping the path and query so an
+/// embedded API key is never recorded or printed.
+fn redact_url(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let host = rest.split(['/', '?']).next().unwrap_or(rest);
+            format!("{scheme}://{host}")
+        }
+        None => url.split(['/', '?']).next().unwrap_or(url).to_string(),
+    }
+}
+
 /// An Anvil-backed EVM chain.
 pub struct EvmEngine {
     name: String,
@@ -85,6 +115,7 @@ pub struct EvmEngine {
     host_port: u16,
     chain_id: u64,
     block_time: u64,
+    fork: Option<Fork>,
 }
 
 impl EvmEngine {
@@ -95,6 +126,7 @@ impl EvmEngine {
             host_port,
             chain_id,
             block_time: 1,
+            fork: None,
         }
     }
 
@@ -102,6 +134,19 @@ impl EvmEngine {
     pub fn block_time(mut self, secs: u64) -> Self {
         self.block_time = secs;
         self
+    }
+
+    /// Fork this chain from a live RPC, optionally pinned to a block. A forked
+    /// chain mirrors real network state, so it does not load the baked test
+    /// tokens.
+    pub fn fork(mut self, url: String, block: Option<u64>) -> Self {
+        self.fork = Some(Fork { url, block });
+        self
+    }
+
+    /// Whether this chain forks a live network.
+    fn is_forked(&self) -> bool {
+        self.fork.is_some()
     }
 
     /// Path (relative to the state dir) of this chain's persistent session
@@ -212,16 +257,32 @@ impl Engine for EvmEngine {
     }
 
     fn compose_service(&self, mode: StateMode) -> String {
-        // Ephemeral: load the baked tokens read-only, never dump. Persistent:
-        // `--state` loads the session snapshot if present and dumps back to it
-        // on exit and every interval, so a crash-restart resumes too.
-        let state_args = match mode {
-            StateMode::Ephemeral => r#""--load-state", "/state/anvil-tokens.json""#.to_string(),
-            StateMode::Persistent => format!(
-                r#""--state", "/{session}", "--state-interval", "{interval}""#,
+        // A forked chain mirrors live state, so it never loads the baked token
+        // snapshot. Ephemeral: load the baked tokens read-only (skipped when
+        // forking), never dump. Persistent: `--state` loads the session snapshot
+        // if present and dumps back to it on exit and every interval, so a
+        // crash-restart resumes too — layered on top of the fork when forking.
+        // Each arg group is leading-comma so it can collapse to nothing.
+        let state_args = match (mode, self.is_forked()) {
+            (StateMode::Ephemeral, true) => String::new(),
+            (StateMode::Ephemeral, false) => {
+                r#", "--load-state", "/state/anvil-tokens.json""#.to_string()
+            }
+            (StateMode::Persistent, _) => format!(
+                r#", "--state", "/{session}", "--state-interval", "{interval}""#,
                 session = self.session_rel_path(),
                 interval = ANVIL_STATE_INTERVAL_SECS,
             ),
+        };
+        let fork_args = match &self.fork {
+            None => String::new(),
+            Some(fork) => {
+                let mut a = format!(r#", "--fork-url", "{}""#, fork.url);
+                if let Some(block) = fork.block {
+                    a.push_str(&format!(r#", "--fork-block-number", "{block}""#));
+                }
+                a
+            }
         };
         ANVIL_SERVICE_TEMPLATE
             .replace("{{NAME}}", &self.name)
@@ -230,18 +291,27 @@ impl Engine for EvmEngine {
             .replace("{{CHAIN_ID}}", &self.chain_id.to_string())
             .replace("{{HOST_PORT}}", &self.host_port.to_string())
             .replace("{{BLOCK_TIME}}", &self.block_time.to_string())
+            .replace("{{FORK_ARGS}}", &fork_args)
             .replace("{{STATE_ARGS}}", &state_args)
     }
 
     fn manifest_entry(&self) -> ChainEntry {
+        // A forked chain mirrors live state; wharfnet deploys nothing onto it, so
+        // it advertises no baked tokens or infra contracts — only the fork.
+        let forked = self.is_forked();
         ChainEntry {
             name: self.name.clone(),
             kind: "evm".to_string(),
             rpc: format!("http://127.0.0.1:{}", self.host_port),
             chain_id: self.chain_id,
             accounts: Self::accounts(),
-            tokens: Self::tokens(),
-            contracts: Self::contracts(),
+            tokens: if forked { Vec::new() } else { Self::tokens() },
+            contracts: if forked {
+                Vec::new()
+            } else {
+                Self::contracts()
+            },
+            fork: self.fork.as_ref().map(Fork::describe),
             // Populated by the orchestrator when an explorer is booted.
             explorer: None,
         }
@@ -257,6 +327,10 @@ impl Engine for EvmEngine {
     }
 
     fn staged_files(&self, mode: StateMode) -> Vec<StagedFile> {
+        // A forked chain loads no baked snapshot, so nothing to stage.
+        if self.is_forked() {
+            return Vec::new();
+        }
         match mode {
             // Refreshed on every boot so the chain always starts from the
             // known-good pre-deployed tokens.
@@ -417,5 +491,65 @@ mod tests {
                 .contents
                 .contains("5fbdb2315678afecb367f032d93f642f64180aa3")
         );
+    }
+
+    #[test]
+    fn forked_compose_adds_fork_url_and_skips_the_token_snapshot() {
+        let yaml = EvmEngine::anvil("mainnet", 8545, 1)
+            .fork("https://rpc.example/key".to_string(), Some(21_000_000))
+            .compose_service(StateMode::Ephemeral);
+        assert!(yaml.contains("\"--fork-url\", \"https://rpc.example/key\""));
+        assert!(yaml.contains("\"--fork-block-number\", \"21000000\""));
+        // A fork mirrors live state — it must not load the baked tokens.
+        assert!(
+            !yaml.contains("--load-state"),
+            "forked chain must not load the token snapshot: {yaml}"
+        );
+        assert!(!yaml.contains("{{"), "no placeholder should remain: {yaml}");
+    }
+
+    #[test]
+    fn forked_persistent_still_dumps_state_over_the_fork() {
+        let yaml = EvmEngine::anvil("mainnet", 8545, 1)
+            .fork("https://rpc.example/key".to_string(), None)
+            .compose_service(StateMode::Persistent);
+        assert!(yaml.contains("\"--fork-url\", \"https://rpc.example/key\""));
+        assert!(!yaml.contains("--fork-block-number"), "no block was pinned");
+        assert!(yaml.contains("\"--state\", \"/state/session-mainnet.json\""));
+    }
+
+    #[test]
+    fn forked_chain_stages_no_files() {
+        let engine = EvmEngine::anvil("mainnet", 8545, 1).fork("https://rpc/x".to_string(), None);
+        assert!(engine.staged_files(StateMode::Ephemeral).is_empty());
+        assert!(engine.staged_files(StateMode::Persistent).is_empty());
+    }
+
+    #[test]
+    fn forked_manifest_entry_redacts_the_url_and_drops_baked_presets() {
+        let entry = EvmEngine::anvil("mainnet", 8545, 1)
+            .fork(
+                "https://eth.example.com/v2/SECRET_KEY".to_string(),
+                Some(123),
+            )
+            .manifest_entry();
+        // The RPC key is never recorded.
+        assert_eq!(
+            entry.fork.as_deref(),
+            Some("https://eth.example.com @ block 123")
+        );
+        // wharfnet deploys nothing onto a fork, so it advertises no presets.
+        assert!(entry.tokens.is_empty());
+        assert!(entry.contracts.is_empty());
+    }
+
+    #[test]
+    fn redact_url_keeps_only_scheme_and_host() {
+        assert_eq!(
+            redact_url("https://eth-mainnet.g.alchemy.com/v2/KEY123"),
+            "https://eth-mainnet.g.alchemy.com"
+        );
+        assert_eq!(redact_url("http://localhost:8545"), "http://localhost:8545");
+        assert_eq!(redact_url("weird?q=1"), "weird");
     }
 }

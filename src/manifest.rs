@@ -28,6 +28,10 @@ pub struct ChainEntry {
     /// (Multicall3, Permit2, the CREATE2 deployer).
     #[serde(default)]
     pub contracts: Vec<Contract>,
+    /// When this chain forks a live network, a redacted description of the
+    /// source (host + pinned block); the RPC key is never recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<String>,
     /// URL of a bundled block explorer for this chain, when one was booted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explorer: Option<String>,
@@ -108,6 +112,7 @@ mod tests {
                 name: "Multicall3".into(),
                 address: "0xcA11bde05977b3631167028862bE2a173976CA11".into(),
             }],
+            fork: None,
             explorer: Some("http://127.0.0.1:5100".into()),
         }])
     }

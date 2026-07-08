@@ -1,7 +1,7 @@
   {{NAME}}:
     image: {{IMAGE}}
     entrypoint: ["anvil"]
-    command: ["--host", "0.0.0.0", "--port", "{{PORT}}", "--chain-id", "{{CHAIN_ID}}", "--block-time", "{{BLOCK_TIME}}", {{STATE_ARGS}}]
+    command: ["--host", "0.0.0.0", "--port", "{{PORT}}", "--chain-id", "{{CHAIN_ID}}", "--block-time", "{{BLOCK_TIME}}"{{FORK_ARGS}}{{STATE_ARGS}}]
     ports:
       - "{{HOST_PORT}}:{{PORT}}"
     volumes:

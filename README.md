@@ -32,6 +32,7 @@ Early WIP, but the **EVM stack works end to end today**. See the
 - [x] Block explorer (Otterscan) per EVM chain, on by default
 - [x] Persistent state — `up --resume` / `up --reset`
 - [x] Optional `wharfnet.toml` to customise the chain topology
+- [x] Mainnet forking — `fork_url`/`fork_block` per chain (Anvil `--fork-url`)
 - [x] EVM chain control — `wharfnet evm mine | warp | impersonate | snapshot | revert`
 - [x] Endpoints manifest — `.wharfnet/wharfnet.json`
 - [x] Boot waits for readiness; `down` tears it all down (CI-friendly)
@@ -113,6 +114,37 @@ falls back to the built-ins.
 ```sh
 wharfnet up --config fork.toml
 WHARFNET_CONFIG=ci.toml wharfnet up
+```
+
+## Mainnet forking
+
+Point a chain at a live RPC and it boots as a **fork** of that network — real
+balances, contracts, and storage, mutable locally. Add `fork_url` (and optionally
+`fork_block` to pin a height) to a chain in `wharfnet.toml`:
+
+```toml
+[[chains]]
+name = "mainnet"
+port = 8545
+chain_id = 1
+fork_url = "${MAINNET_RPC}"   # ${VAR} is expanded from the environment
+fork_block = 21000000         # optional; omit to track the latest block
+```
+
+`${VAR}` references are resolved from the environment on load, so an RPC key
+never has to live in the file — and the manifest and `status` only ever record a
+**redacted** `scheme://host`, never the key. Pinning `fork_block` to a past block
+needs an **archive** RPC; forking at the latest block works with an ordinary
+full-node endpoint.
+
+A forked chain mirrors live state, so it does **not** load the baked test tokens
+or canonical contracts — it already has whatever the source network has. Combine
+forking with [chain control](#evm-chain-control): `wharfnet evm impersonate` lets
+you send transactions as any address (a whale, a protocol admin) with no key.
+
+```sh
+MAINNET_RPC=https://… wharfnet up --config fork.toml --bare
+cast call 0xA0b8…eB48 'symbol()(string)' --rpc-url http://127.0.0.1:8545   # -> "USDC"
 ```
 
 ## Test tokens

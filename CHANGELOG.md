@@ -12,6 +12,12 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Mainnet forking** — point a chain at a live RPC with `fork_url` (and optional
+  `fork_block`) in `wharfnet.toml` and it boots as a fork of that network via
+  Anvil's `--fork-url`, so you can test against real balances, contracts, and
+  storage locally. `${VAR}` in `fork_url` is expanded from the environment so an
+  RPC key stays out of the file, and only a redacted `scheme://host` is recorded.
+  A forked chain skips the baked test tokens/contracts since it mirrors live state.
 - **Presets — canonical contracts & weird tokens** — every EVM chain now boots
   with Multicall3, Permit2, and the CREATE2 deployer at their real chain-agnostic
   addresses (Multicall3/Permit2 etched from mainnet bytecode), so viem/ethers/

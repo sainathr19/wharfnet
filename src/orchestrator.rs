@@ -70,8 +70,11 @@ fn engines_for(config: &Config) -> Vec<Box<dyn Engine>> {
         .chains
         .iter()
         .map(|c| {
-            Box::new(EvmEngine::anvil(&c.name, c.port, c.chain_id).block_time(c.block_time))
-                as Box<dyn Engine>
+            let mut engine = EvmEngine::anvil(&c.name, c.port, c.chain_id).block_time(c.block_time);
+            if let Some(url) = &c.fork_url {
+                engine = engine.fork(url.clone(), c.fork_block);
+            }
+            Box::new(engine) as Box<dyn Engine>
         })
         .collect()
 }
@@ -334,6 +337,9 @@ fn up_in(
             "   {} [{}]  {}  (chainId {})",
             chain.name, chain.kind, chain.rpc, chain.chain_id
         );
+        if let Some(fork) = &chain.fork {
+            println!("      fork      {fork}");
+        }
         if let Some(url) = &chain.explorer {
             println!("      explorer  {url}");
         }
@@ -400,6 +406,9 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
         println!("     chainId  {}", chain.chain_id);
         if let Some(account) = chain.accounts.first() {
             println!("     account  {}", account.address);
+        }
+        if let Some(fork) = &chain.fork {
+            println!("     fork     {fork}");
         }
         if let Some(url) = &chain.explorer {
             println!("     explorer {url}");
@@ -672,6 +681,7 @@ mod tests {
                 name: "Multicall3".into(),
                 address: "0xcA11bde05977b3631167028862bE2a173976CA11".into(),
             }],
+            fork: None,
             explorer: Some("http://127.0.0.1:5100".into()),
         }]);
         manifest.write(&manifest_path(dir.path())).unwrap();
