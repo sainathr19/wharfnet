@@ -196,6 +196,7 @@ mod tests {
                 balance: "10000 ETH".into(),
             }],
             tokens: vec![],
+            contracts: vec![],
             explorer: None,
         }
     }

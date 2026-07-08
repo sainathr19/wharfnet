@@ -338,7 +338,10 @@ fn up_in(
             println!("      explorer  {url}");
         }
         for token in &chain.tokens {
-            println!("      {:<5} {}", token.symbol, token.address);
+            println!("      token  {:<5} {}", token.symbol, token.address);
+        }
+        for c in &chain.contracts {
+            println!("      infra  {:<16} {}", c.name, c.address);
         }
     }
 
@@ -407,6 +410,9 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
                 token.symbol, token.address, token.decimals
             );
         }
+        for c in &chain.contracts {
+            println!("     contract {:<16} {}", c.name, c.address);
+        }
         println!();
     }
 
@@ -457,7 +463,7 @@ fn rpc_ready(port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{Account, ChainEntry, Token};
+    use crate::manifest::{Account, ChainEntry, Contract, Token};
     use std::net::TcpListener;
     use tempfile::tempdir;
 
@@ -661,6 +667,10 @@ mod tests {
                 name: "USD Coin".into(),
                 address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".into(),
                 decimals: 6,
+            }],
+            contracts: vec![Contract {
+                name: "Multicall3".into(),
+                address: "0xcA11bde05977b3631167028862bE2a173976CA11".into(),
             }],
             explorer: Some("http://127.0.0.1:5100".into()),
         }]);

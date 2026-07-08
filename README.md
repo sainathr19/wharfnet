@@ -27,7 +27,8 @@ Early WIP, but the **EVM stack works end to end today**. See the
 
 - [x] Two EVM chains (Anvil) — `anvil-1` (:8545), `anvil-2` (:8546)
 - [x] Unified faucet — native coin + every token, or a single token via `--token`
-- [x] Pre-deployed ERC-20 test tokens (USDC, WBTC) at fixed addresses, public `mint`
+- [x] Pre-deployed ERC-20 test tokens (USDC, WBTC + weird tokens) at fixed addresses, public `mint`
+- [x] Canonical contracts pre-deployed (Multicall3, Permit2, CREATE2 deployer)
 - [x] Block explorer (Otterscan) per EVM chain, on by default
 - [x] Persistent state — `up --resume` / `up --reset`
 - [x] Optional `wharfnet.toml` to customise the chain topology
@@ -116,18 +117,41 @@ WHARFNET_CONFIG=ci.toml wharfnet up
 
 ## Test tokens
 
-Every EVM chain boots with standard test tokens pre-deployed at fixed addresses
+Every EVM chain boots with test tokens pre-deployed at fixed addresses
 (identical on all chains) from a baked-in Anvil state snapshot — no deploy step
 required. Each has a **public `mint(address,uint256)`** so a faucet (or your
-tests) can top up any address on demand:
+tests) can top up any address on demand. The first two are standard, well-behaved
+ERC-20s; the rest are deliberately **"weird"** for token-integration testing:
 
-| Token | Decimals | Address |
-| ----- | -------- | ------- |
-| USDC  | 6        | `0x5FbDB2315678afecb367f032d93F642f64180aa3` |
-| WBTC  | 8        | `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512` |
+| Token | Decimals | Address | Behaviour |
+| ----- | -------- | ------- | --------- |
+| USDC  | 6  | `0x5FbDB2315678afecb367f032d93F642f64180aa3` | standard |
+| WBTC  | 8  | `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512` | standard |
+| FEE   | 18 | `0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0` | fee-on-transfer (1% burned on `transfer`) |
+| REB   | 18 | `0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9` | rebasing (`rebase(uint256)` rescales balances) |
+| NRT   | 6  | `0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9` | no return value (USDT-style `transfer`/`approve`) |
+
+The weird tokens let you check that your contracts and integrations handle
+real-world token quirks — amount-received ≠ amount-sent, balances that move with
+no transfer, and calls that don't return a decodable `bool`.
 
 The dev accounts start pre-seeded with a balance of each. Regenerate the
 snapshot after editing the token sources with `./scripts/gen-token-state.sh`.
+
+## Canonical contracts
+
+Every EVM chain also boots with the infrastructure contracts that live at the
+**same address on every real chain**, so client libraries and deploy tooling
+that hardcode these addresses work out of the box — no per-chain wiring:
+
+| Contract         | Address                                      | Used by |
+| ---------------- | -------------------------------------------- | ------- |
+| Multicall3       | `0xcA11bde05977b3631167028862bE2a173976CA11` | viem / ethers / wagmi batch reads |
+| Permit2          | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | Uniswap & signature-based approvals |
+| CREATE2 Deployer | `0x4e59b44847b379578588920cA78FbF26c0B4956C` | `forge create --create2`, deterministic deploys |
+
+Multicall3 and Permit2 are etched from their real mainnet bytecode (see
+`src/resources/presets/`); the CREATE2 deployer is deployed by Anvil itself.
 
 ## Block explorer
 
