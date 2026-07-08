@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use crate::config::{self, Config};
 use crate::docker;
 use crate::engine::{Engine, EvmEngine, StateMode};
 use crate::manifest::Manifest;
@@ -61,13 +62,18 @@ pub(crate) fn manifest_path(base: &Path) -> PathBuf {
     base.join("wharfnet.json")
 }
 
-/// The chains wharfnet boots. Two Anvil-backed EVM chains today; Solana and
-/// Starknet engines are appended here as they land.
-fn engines() -> Vec<Box<dyn Engine>> {
-    vec![
-        Box::new(EvmEngine::anvil("anvil-1", 8545, 31337)),
-        Box::new(EvmEngine::anvil("anvil-2", 8546, 31338)),
-    ]
+/// Build the engines described by `config`. EVM chains only today; other kinds
+/// are rejected earlier by config validation. Solana/Starknet engines will be
+/// dispatched on `kind` here as they land.
+fn engines_for(config: &Config) -> Vec<Box<dyn Engine>> {
+    config
+        .chains
+        .iter()
+        .map(|c| {
+            Box::new(EvmEngine::anvil(&c.name, c.port, c.chain_id).block_time(c.block_time))
+                as Box<dyn Engine>
+        })
+        .collect()
 }
 
 /// A resolved Otterscan explorer for one chain: its service name, the host port
@@ -206,7 +212,7 @@ fn is_session_file(name: &str) -> bool {
 /// Print the generated compose file to stdout without booting anything.
 /// Useful for inspecting or debugging what wharfnet will run.
 pub fn print_compose(explorer: bool) -> Result<()> {
-    let engines = engines();
+    let engines = engines_for(&config::load()?);
     let explorers = if explorer {
         explorer_services(&engines)
     } else {
@@ -238,7 +244,7 @@ pub fn status() -> Result<()> {
 
 fn up_in(base: &Path, project: &str, mode: UpMode, explorer: bool) -> Result<()> {
     docker::ensure_available()?;
-    let engines = engines();
+    let engines = engines_for(&config::load()?);
     let state_mode = mode.state_mode();
     let explorers = if explorer {
         explorer_services(&engines)
@@ -447,6 +453,11 @@ mod tests {
     use crate::manifest::{Account, ChainEntry, Token};
     use std::net::TcpListener;
     use tempfile::tempdir;
+
+    /// The default engine set (two Anvil chains), for tests that predate config.
+    fn engines() -> Vec<Box<dyn Engine>> {
+        engines_for(&Config::default())
+    }
 
     #[test]
     fn render_compose_has_header_and_all_services() {

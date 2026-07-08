@@ -84,6 +84,7 @@ pub struct EvmEngine {
     image: String,
     host_port: u16,
     chain_id: u64,
+    block_time: u64,
 }
 
 impl EvmEngine {
@@ -93,7 +94,14 @@ impl EvmEngine {
             image: "ghcr.io/foundry-rs/foundry:stable".to_string(),
             host_port,
             chain_id,
+            block_time: 1,
         }
+    }
+
+    /// Override the block time (auto-mining interval, in seconds).
+    pub fn block_time(mut self, secs: u64) -> Self {
+        self.block_time = secs;
+        self
     }
 
     /// Path (relative to the state dir) of this chain's persistent session
@@ -177,6 +185,7 @@ impl Engine for EvmEngine {
             .replace("{{PORT}}", &ANVIL_INTERNAL_PORT.to_string())
             .replace("{{CHAIN_ID}}", &self.chain_id.to_string())
             .replace("{{HOST_PORT}}", &self.host_port.to_string())
+            .replace("{{BLOCK_TIME}}", &self.block_time.to_string())
             .replace("{{STATE_ARGS}}", &state_args)
     }
 
@@ -298,6 +307,18 @@ mod tests {
         assert_eq!(usdc.address, "0x5FbDB2315678afecb367f032d93F642f64180aa3");
         assert_eq!(usdc.decimals, 6);
         assert_eq!(entry.tokens[1].decimals, 8);
+    }
+
+    #[test]
+    fn block_time_defaults_to_one_and_is_overridable() {
+        let default =
+            EvmEngine::anvil("anvil-1", 8545, 31337).compose_service(StateMode::Ephemeral);
+        assert!(default.contains("\"--block-time\", \"1\""));
+
+        let slow = EvmEngine::anvil("anvil-1", 8545, 31337)
+            .block_time(12)
+            .compose_service(StateMode::Ephemeral);
+        assert!(slow.contains("\"--block-time\", \"12\""));
     }
 
     #[test]

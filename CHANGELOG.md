@@ -12,6 +12,10 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Config file (`wharfnet.toml`)** — customise the chain topology (name, port,
+  `chain_id`, `block_time`, and how many chains). Optional: without one, wharfnet
+  stays zero-config with its two default Anvil chains. Validated on load (unique
+  names/ports/ids, `evm`-only for now).
 - **EVM chain-control commands** — `wharfnet evm mine`, `increase-time`, `warp`,
   `impersonate`, `snapshot`, and `revert` wrap Anvil's cheat RPCs to drive a
   running localnet: advance blocks/time, send as any address without a key, and
