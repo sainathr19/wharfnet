@@ -211,8 +211,8 @@ fn is_session_file(name: &str) -> bool {
 
 /// Print the generated compose file to stdout without booting anything.
 /// Useful for inspecting or debugging what wharfnet will run.
-pub fn print_compose(explorer: bool) -> Result<()> {
-    let engines = engines_for(&config::load()?);
+pub fn print_compose(explorer: bool, config_path: Option<&Path>) -> Result<()> {
+    let engines = engines_for(&config::load(config_path)?);
     let explorers = if explorer {
         explorer_services(&engines)
     } else {
@@ -225,12 +225,13 @@ pub fn print_compose(explorer: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn up(mode: UpMode, explorer: bool) -> Result<()> {
+pub fn up(mode: UpMode, explorer: bool, config_path: Option<&Path>) -> Result<()> {
     up_in(
         Path::new(DEFAULT_STATE_DIR),
         DEFAULT_PROJECT,
         mode,
         explorer,
+        config_path,
     )
 }
 
@@ -242,9 +243,15 @@ pub fn status() -> Result<()> {
     status_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT)
 }
 
-fn up_in(base: &Path, project: &str, mode: UpMode, explorer: bool) -> Result<()> {
+fn up_in(
+    base: &Path,
+    project: &str,
+    mode: UpMode,
+    explorer: bool,
+    config_path: Option<&Path>,
+) -> Result<()> {
     docker::ensure_available()?;
-    let engines = engines_for(&config::load()?);
+    let engines = engines_for(&config::load(config_path)?);
     let state_mode = mode.state_mode();
     let explorers = if explorer {
         explorer_services(&engines)
@@ -534,8 +541,8 @@ mod tests {
 
     #[test]
     fn print_compose_is_ok() {
-        assert!(print_compose(false).is_ok());
-        assert!(print_compose(true).is_ok());
+        assert!(print_compose(false, None).is_ok());
+        assert!(print_compose(true, None).is_ok());
     }
 
     #[test]

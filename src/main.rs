@@ -11,6 +11,7 @@ mod orchestrator;
 mod ui;
 
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 /// One-command localnet for EVM, Solana & Starknet.
 #[derive(Parser)]
@@ -39,6 +40,9 @@ enum Commands {
         /// Boot only the chains — skip the bundled block explorers.
         #[arg(long)]
         bare: bool,
+        /// Path to a config file (default: ./wharfnet.toml, or $WHARFNET_CONFIG).
+        #[arg(long, short = 'c', value_name = "PATH")]
+        config: Option<PathBuf>,
     },
     /// Tear down the local network and clean up state.
     Down,
@@ -49,6 +53,9 @@ enum Commands {
         /// Print only the chain services, without the bundled explorers.
         #[arg(long)]
         bare: bool,
+        /// Path to a config file (default: ./wharfnet.toml, or $WHARFNET_CONFIG).
+        #[arg(long, short = 'c', value_name = "PATH")]
+        config: Option<PathBuf>,
     },
     /// Fund an address from the built-in faucet.
     Faucet {
@@ -141,6 +148,7 @@ fn run(command: Commands) -> anyhow::Result<()> {
             resume,
             reset,
             bare,
+            config,
         } => {
             let mode = if reset {
                 orchestrator::UpMode::Reset
@@ -149,11 +157,11 @@ fn run(command: Commands) -> anyhow::Result<()> {
             } else {
                 orchestrator::UpMode::Fresh
             };
-            orchestrator::up(mode, !bare)
+            orchestrator::up(mode, !bare, config.as_deref())
         }
         Commands::Down => orchestrator::down(),
         Commands::Status => orchestrator::status(),
-        Commands::Compose { bare } => orchestrator::print_compose(!bare),
+        Commands::Compose { bare, config } => orchestrator::print_compose(!bare, config.as_deref()),
         Commands::Faucet {
             chain,
             address,
@@ -194,7 +202,8 @@ mod tests {
             Commands::Up {
                 resume: false,
                 reset: false,
-                bare: false
+                bare: false,
+                config: None
             }
         ));
     }
@@ -215,7 +224,25 @@ mod tests {
         assert!(matches!(up.command, Commands::Up { bare: true, .. }));
 
         let compose = Cli::try_parse_from(["wharfnet", "compose", "--bare"]).unwrap();
-        assert!(matches!(compose.command, Commands::Compose { bare: true }));
+        assert!(matches!(
+            compose.command,
+            Commands::Compose { bare: true, .. }
+        ));
+    }
+
+    #[test]
+    fn parses_config_path_on_up_and_compose() {
+        let up = Cli::try_parse_from(["wharfnet", "up", "-c", "custom.toml"]).unwrap();
+        assert!(matches!(
+            up.command,
+            Commands::Up { config: Some(ref p), .. } if p.as_os_str() == "custom.toml"
+        ));
+
+        let compose = Cli::try_parse_from(["wharfnet", "compose", "--config", "a/b.toml"]).unwrap();
+        assert!(matches!(
+            compose.command,
+            Commands::Compose { config: Some(ref p), .. } if p.as_os_str() == "a/b.toml"
+        ));
     }
 
     #[test]
@@ -322,8 +349,20 @@ mod tests {
 
     #[test]
     fn run_compose_is_ok() {
-        assert!(run(Commands::Compose { bare: false }).is_ok());
-        assert!(run(Commands::Compose { bare: true }).is_ok());
+        assert!(
+            run(Commands::Compose {
+                bare: false,
+                config: None
+            })
+            .is_ok()
+        );
+        assert!(
+            run(Commands::Compose {
+                bare: true,
+                config: None
+            })
+            .is_ok()
+        );
     }
 
     #[test]
@@ -359,6 +398,7 @@ mod tests {
             resume: false,
             reset: false,
             bare: true,
+            config: None,
         })
         .expect("up should succeed");
         run(Commands::Status).expect("status should succeed");
