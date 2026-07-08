@@ -1,0 +1,7 @@
+  {{NAME}}:
+    image: {{IMAGE}}
+    ports:
+      - "{{HOST_PORT}}:80"
+    volumes:
+      - "./state/{{CONFIG_FILE}}:/usr/share/nginx/html/config.json:ro"
+    restart: unless-stopped

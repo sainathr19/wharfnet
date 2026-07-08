@@ -40,6 +40,13 @@ pub enum StateMode {
     Persistent,
 }
 
+/// How to point a bundled block explorer at a chain. The browser talks to the
+/// chain directly, so it needs the chain's *published host* RPC port.
+pub struct ExplorerTarget {
+    pub chain_name: String,
+    pub rpc_host_port: u16,
+}
+
 /// A file an engine needs written under the state dir before its container
 /// boots (e.g. a chain snapshot mounted into the container).
 pub struct StagedFile {
@@ -63,6 +70,11 @@ pub trait Engine {
     /// Files to write under the state dir before boot. Defaults to none.
     fn staged_files(&self, _mode: StateMode) -> Vec<StagedFile> {
         Vec::new()
+    }
+    /// How to pair this chain with an Otterscan explorer, if it supports one.
+    /// Defaults to `None` (no explorer).
+    fn explorer_target(&self) -> Option<ExplorerTarget> {
+        None
     }
 }
 
@@ -178,7 +190,18 @@ impl Engine for EvmEngine {
             chain_id: self.chain_id,
             accounts: Self::accounts(),
             tokens: Self::tokens(),
+            // Populated by the orchestrator when an explorer is booted.
+            explorer: None,
         }
+    }
+
+    fn explorer_target(&self) -> Option<ExplorerTarget> {
+        // Anvil implements the Otterscan RPC API (`ots_*`), so Otterscan works
+        // against it with no indexer. The browser hits the published host port.
+        Some(ExplorerTarget {
+            chain_name: self.name.clone(),
+            rpc_host_port: self.host_port,
+        })
     }
 
     fn staged_files(&self, mode: StateMode) -> Vec<StagedFile> {
@@ -268,6 +291,15 @@ mod tests {
         assert_eq!(usdc.address, "0x5FbDB2315678afecb367f032d93F642f64180aa3");
         assert_eq!(usdc.decimals, 6);
         assert_eq!(entry.tokens[1].decimals, 8);
+    }
+
+    #[test]
+    fn evm_chain_exposes_an_explorer_target_on_its_host_port() {
+        let target = EvmEngine::anvil("anvil-2", 8546, 31338)
+            .explorer_target()
+            .expect("evm chains support an explorer");
+        assert_eq!(target.chain_name, "anvil-2");
+        assert_eq!(target.rpc_host_port, 8546);
     }
 
     #[test]

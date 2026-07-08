@@ -33,13 +33,20 @@ enum Commands {
         /// Discard any saved session snapshot and boot a clean, fresh network.
         #[arg(long)]
         reset: bool,
+        /// Boot only the chains — skip the bundled block explorers.
+        #[arg(long)]
+        bare: bool,
     },
     /// Tear down the local network and clean up state.
     Down,
     /// Show the status and endpoints of running chains.
     Status,
     /// Print the generated docker-compose.yml without booting anything.
-    Compose,
+    Compose {
+        /// Print only the chain services, without the bundled explorers.
+        #[arg(long)]
+        bare: bool,
+    },
     /// Fund an address from the built-in faucet.
     Faucet {
         /// Target chain — a kind (e.g. `evm`) to fund every matching chain, or a
@@ -70,7 +77,11 @@ fn main() {
 /// `Result` and is unit-testable.
 fn run(command: Commands) -> anyhow::Result<()> {
     match command {
-        Commands::Up { resume, reset } => {
+        Commands::Up {
+            resume,
+            reset,
+            bare,
+        } => {
             let mode = if reset {
                 orchestrator::UpMode::Reset
             } else if resume {
@@ -78,11 +89,11 @@ fn run(command: Commands) -> anyhow::Result<()> {
             } else {
                 orchestrator::UpMode::Fresh
             };
-            orchestrator::up(mode)
+            orchestrator::up(mode, !bare)
         }
         Commands::Down => orchestrator::down(),
         Commands::Status => orchestrator::status(),
-        Commands::Compose => orchestrator::print_compose(),
+        Commands::Compose { bare } => orchestrator::print_compose(!bare),
         Commands::Faucet {
             chain,
             address,
@@ -110,7 +121,8 @@ mod tests {
             cli.command,
             Commands::Up {
                 resume: false,
-                reset: false
+                reset: false,
+                bare: false
             }
         ));
     }
@@ -122,6 +134,16 @@ mod tests {
 
         let reset = Cli::try_parse_from(["wharfnet", "up", "--reset"]).unwrap();
         assert!(matches!(reset.command, Commands::Up { reset: true, .. }));
+    }
+
+    #[test]
+    fn parses_bare_flag_on_up_and_compose() {
+        // Explorers are on by default; `--bare` opts out.
+        let up = Cli::try_parse_from(["wharfnet", "up", "--bare"]).unwrap();
+        assert!(matches!(up.command, Commands::Up { bare: true, .. }));
+
+        let compose = Cli::try_parse_from(["wharfnet", "compose", "--bare"]).unwrap();
+        assert!(matches!(compose.command, Commands::Compose { bare: true }));
     }
 
     #[test]
@@ -184,7 +206,8 @@ mod tests {
 
     #[test]
     fn run_compose_is_ok() {
-        assert!(run(Commands::Compose).is_ok());
+        assert!(run(Commands::Compose { bare: false }).is_ok());
+        assert!(run(Commands::Compose { bare: true }).is_ok());
     }
 
     #[test]
@@ -209,9 +232,12 @@ mod tests {
             return;
         }
         let _ = run(Commands::Down); // clean any prior state
+        // Bare keeps this lifecycle check focused on the chains (the explorer
+        // path is covered by unit tests), so it doesn't pull the Otterscan image.
         run(Commands::Up {
             resume: false,
             reset: false,
+            bare: true,
         })
         .expect("up should succeed");
         run(Commands::Status).expect("status should succeed");

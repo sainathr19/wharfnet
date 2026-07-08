@@ -22,6 +22,14 @@ pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
 pub(crate) const DEFAULT_STATE_DIR: &str = ".wharfnet";
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// Pinned Otterscan image. Otterscan is a static frontend that speaks straight
+/// to the chain's RPC via Anvil's `ots_*` API — no indexer or database.
+const OTTERSCAN_IMAGE: &str = "otterscan/otterscan:v2.11.0";
+/// Compose service template for an Otterscan explorer.
+const OTTERSCAN_SERVICE_TEMPLATE: &str = include_str!("resources/docker/services/otterscan.yml");
+/// First host port for explorers; each subsequent chain's explorer takes the next.
+const EXPLORER_BASE_PORT: u16 = 5100;
+
 /// How `up` should treat any previously saved session state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UpMode {
@@ -62,7 +70,63 @@ fn engines() -> Vec<Box<dyn Engine>> {
     ]
 }
 
-fn render_compose(engines: &[Box<dyn Engine>], mode: StateMode) -> String {
+/// A resolved Otterscan explorer for one chain: its service name, the host port
+/// it's published on, the generated frontend config, and the URL to open.
+struct ExplorerService {
+    service_name: String,
+    chain_name: String,
+    host_port: u16,
+    config_rel_path: String,
+    config_file: String,
+    config_json: String,
+    url: String,
+}
+
+/// Build one explorer per explorer-capable chain, assigning host ports from
+/// `EXPLORER_BASE_PORT` upward in engine order. Empty when none support one.
+fn explorer_services(engines: &[Box<dyn Engine>]) -> Vec<ExplorerService> {
+    let mut services = Vec::new();
+    let mut port = EXPLORER_BASE_PORT;
+    for engine in engines {
+        let Some(target) = engine.explorer_target() else {
+            continue;
+        };
+        let host_port = port;
+        port += 1;
+        let config_file = format!("otterscan-{}.json", target.chain_name);
+        // The browser (on the host) hits both the chain RPC and the explorer's
+        // own bundled assets, so both URLs use published host ports.
+        let config_json = format!(
+            "{{\n  \"erigonURL\": \"http://127.0.0.1:{rpc}\",\n  \"assetsURLPrefix\": \"http://127.0.0.1:{exp}\"\n}}\n",
+            rpc = target.rpc_host_port,
+            exp = host_port,
+        );
+        services.push(ExplorerService {
+            service_name: format!("explorer-{}", target.chain_name),
+            chain_name: target.chain_name,
+            host_port,
+            config_rel_path: format!("state/{config_file}"),
+            config_file,
+            config_json,
+            url: format!("http://127.0.0.1:{host_port}"),
+        });
+    }
+    services
+}
+
+fn render_explorer_service(svc: &ExplorerService) -> String {
+    OTTERSCAN_SERVICE_TEMPLATE
+        .replace("{{NAME}}", &svc.service_name)
+        .replace("{{IMAGE}}", OTTERSCAN_IMAGE)
+        .replace("{{HOST_PORT}}", &svc.host_port.to_string())
+        .replace("{{CONFIG_FILE}}", &svc.config_file)
+}
+
+fn render_compose(
+    engines: &[Box<dyn Engine>],
+    mode: StateMode,
+    explorers: &[ExplorerService],
+) -> String {
     let mut out = String::from(COMPOSE_HEADER);
     if !out.ends_with('\n') {
         out.push('\n');
@@ -70,7 +134,23 @@ fn render_compose(engines: &[Box<dyn Engine>], mode: StateMode) -> String {
     for engine in engines {
         out.push_str(&engine.compose_service(mode));
     }
+    for svc in explorers {
+        out.push_str(&render_explorer_service(svc));
+    }
     out
+}
+
+/// Write each explorer's generated `config.json` under the state dir so the
+/// compose file can mount it into the Otterscan container.
+fn stage_explorer_configs(base: &Path, explorers: &[ExplorerService]) -> Result<()> {
+    for svc in explorers {
+        let dest = base.join(&svc.config_rel_path);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&dest, &svc.config_json)?;
+    }
+    Ok(())
 }
 
 /// Write each engine's staged files (chain snapshots, session seeds) under the
@@ -125,13 +205,22 @@ fn is_session_file(name: &str) -> bool {
 
 /// Print the generated compose file to stdout without booting anything.
 /// Useful for inspecting or debugging what wharfnet will run.
-pub fn print_compose() -> Result<()> {
-    print!("{}", render_compose(&engines(), StateMode::Ephemeral));
+pub fn print_compose(explorer: bool) -> Result<()> {
+    let engines = engines();
+    let explorers = if explorer {
+        explorer_services(&engines)
+    } else {
+        Vec::new()
+    };
+    print!(
+        "{}",
+        render_compose(&engines, StateMode::Ephemeral, &explorers)
+    );
     Ok(())
 }
 
-pub fn up(mode: UpMode) -> Result<()> {
-    up_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT, mode)
+pub fn up(mode: UpMode, explorer: bool) -> Result<()> {
+    up_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT, mode, explorer)
 }
 
 pub fn down() -> Result<()> {
@@ -142,10 +231,15 @@ pub fn status() -> Result<()> {
     status_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT)
 }
 
-fn up_in(base: &Path, project: &str, mode: UpMode) -> Result<()> {
+fn up_in(base: &Path, project: &str, mode: UpMode, explorer: bool) -> Result<()> {
     docker::ensure_available()?;
     let engines = engines();
     let state_mode = mode.state_mode();
+    let explorers = if explorer {
+        explorer_services(&engines)
+    } else {
+        Vec::new()
+    };
 
     if mode == UpMode::Reset {
         clear_sessions(base)?;
@@ -154,8 +248,12 @@ fn up_in(base: &Path, project: &str, mode: UpMode) -> Result<()> {
     let resuming = mode == UpMode::Resume && has_saved_session(base);
 
     fs::create_dir_all(base)?;
-    fs::write(compose_path(base), render_compose(&engines, state_mode))?;
+    fs::write(
+        compose_path(base),
+        render_compose(&engines, state_mode, &explorers),
+    )?;
     stage_files(base, &engines, state_mode)?;
+    stage_explorer_configs(base, &explorers)?;
 
     match mode {
         UpMode::Resume if resuming => {
@@ -194,7 +292,13 @@ fn up_in(base: &Path, project: &str, mode: UpMode) -> Result<()> {
         }
     }
 
-    let manifest = Manifest::new(engines.iter().map(|e| e.manifest_entry()).collect());
+    let mut entries: Vec<_> = engines.iter().map(|e| e.manifest_entry()).collect();
+    for svc in &explorers {
+        if let Some(entry) = entries.iter_mut().find(|c| c.name == svc.chain_name) {
+            entry.explorer = Some(svc.url.clone());
+        }
+    }
+    let manifest = Manifest::new(entries);
     manifest.write(&manifest_path(base))?;
 
     println!(
@@ -206,6 +310,9 @@ fn up_in(base: &Path, project: &str, mode: UpMode) -> Result<()> {
             "   {} [{}]  {}  (chainId {})",
             chain.name, chain.kind, chain.rpc, chain.chain_id
         );
+        if let Some(url) = &chain.explorer {
+            println!("      explorer  {url}");
+        }
         for token in &chain.tokens {
             println!("      {:<5} {}", token.symbol, token.address);
         }
@@ -264,6 +371,9 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
         println!("     chainId  {}", chain.chain_id);
         if let Some(account) = chain.accounts.first() {
             println!("     account  {}", account.address);
+        }
+        if let Some(url) = &chain.explorer {
+            println!("     explorer {url}");
         }
         for token in &chain.tokens {
             println!(
@@ -328,7 +438,7 @@ mod tests {
 
     #[test]
     fn render_compose_has_header_and_all_services() {
-        let out = render_compose(&engines(), StateMode::Ephemeral);
+        let out = render_compose(&engines(), StateMode::Ephemeral, &[]);
         assert!(out.starts_with("# Generated by wharfnet"));
         assert!(out.contains("services:"));
         assert!(out.contains("anvil-1:"));
@@ -337,19 +447,64 @@ mod tests {
 
     #[test]
     fn render_compose_reflects_the_state_mode() {
-        let ephemeral = render_compose(&engines(), StateMode::Ephemeral);
+        let ephemeral = render_compose(&engines(), StateMode::Ephemeral, &[]);
         assert!(ephemeral.contains("--load-state"));
         assert!(!ephemeral.contains("--state-interval"));
 
-        let persistent = render_compose(&engines(), StateMode::Persistent);
+        let persistent = render_compose(&engines(), StateMode::Persistent, &[]);
         assert!(persistent.contains("session-anvil-1.json"));
         assert!(persistent.contains("session-anvil-2.json"));
         assert!(persistent.contains("--state-interval"));
     }
 
     #[test]
+    fn explorer_services_are_assigned_ports_and_configs_per_chain() {
+        let svcs = explorer_services(&engines());
+        assert_eq!(svcs.len(), 2, "one explorer per EVM chain");
+
+        assert_eq!(svcs[0].service_name, "explorer-anvil-1");
+        assert_eq!(svcs[0].host_port, 5100);
+        assert_eq!(svcs[0].url, "http://127.0.0.1:5100");
+        assert_eq!(svcs[0].config_rel_path, "state/otterscan-anvil-1.json");
+        // anvil-1 is published on 8545, so the browser points there.
+        assert!(svcs[0].config_json.contains("\"erigonURL\": \"http://127.0.0.1:8545\""));
+
+        assert_eq!(svcs[1].service_name, "explorer-anvil-2");
+        assert_eq!(svcs[1].host_port, 5101);
+        assert!(svcs[1].config_json.contains("\"erigonURL\": \"http://127.0.0.1:8546\""));
+    }
+
+    #[test]
+    fn render_compose_appends_explorer_services_when_requested() {
+        let engines = engines();
+        let svcs = explorer_services(&engines);
+        let out = render_compose(&engines, StateMode::Ephemeral, &svcs);
+        assert!(out.contains("explorer-anvil-1:"));
+        assert!(out.contains("explorer-anvil-2:"));
+        assert!(out.contains("otterscan/otterscan:"));
+        assert!(out.contains("\"5100:80\""));
+        assert!(out.contains("otterscan-anvil-1.json:/usr/share/nginx/html/config.json:ro"));
+        assert!(!out.contains("{{"), "no placeholder should remain: {out}");
+    }
+
+    #[test]
+    fn stage_explorer_configs_writes_each_config() {
+        let dir = tempdir().unwrap();
+        let svcs = explorer_services(&engines());
+        stage_explorer_configs(dir.path(), &svcs).unwrap();
+        let cfg = dir.path().join("state/otterscan-anvil-1.json");
+        assert!(cfg.exists());
+        assert!(
+            fs::read_to_string(&cfg)
+                .unwrap()
+                .contains("http://127.0.0.1:8545")
+        );
+    }
+
+    #[test]
     fn print_compose_is_ok() {
-        assert!(print_compose().is_ok());
+        assert!(print_compose(false).is_ok());
+        assert!(print_compose(true).is_ok());
     }
 
     #[test]
@@ -463,6 +618,7 @@ mod tests {
                 address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".into(),
                 decimals: 6,
             }],
+            explorer: Some("http://127.0.0.1:5100".into()),
         }]);
         manifest.write(&manifest_path(dir.path())).unwrap();
         // No docker-compose.yml in the dir → the compose_ps branch is skipped,

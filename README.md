@@ -31,8 +31,11 @@ test against it locally or in CI.
 # build
 cargo build --release
 
-# boot the local multi-chain network (fresh every time)
+# boot the local multi-chain network — chains + a block explorer each
 wharfnet up
+
+# boot just the chains, without the explorers
+wharfnet up --bare
 
 # resume where you left off — restores balances, txs & deployments
 wharfnet up --resume
@@ -70,6 +73,27 @@ tests) can top up any address on demand:
 
 The dev accounts start pre-seeded with a balance of each. Regenerate the
 snapshot after editing the token sources with `./scripts/gen-token-state.sh`.
+
+## Block explorer
+
+`wharfnet up` boots an [Otterscan](https://github.com/otterscan/otterscan)
+instance for each EVM chain by default — a lightweight, open-source block
+explorer. Pass `--bare` to skip them and run only the chains:
+
+```sh
+wharfnet up          # chains + explorers
+wharfnet up --bare   # chains only
+```
+
+Anvil implements Otterscan's RPC API (`ots_*`), so the explorer needs no indexer
+or database — it's a static frontend talking straight to the chain. Each chain
+gets its own explorer on a dedicated port, and the URL is recorded in the
+manifest and printed by `status`:
+
+| Chain   | RPC                     | Explorer                |
+| ------- | ----------------------- | ----------------------- |
+| anvil-1 | `http://127.0.0.1:8545` | `http://127.0.0.1:5100` |
+| anvil-2 | `http://127.0.0.1:8546` | `http://127.0.0.1:5101` |
 
 ## State & persistence
 

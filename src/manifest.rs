@@ -24,6 +24,9 @@ pub struct ChainEntry {
     /// Test tokens pre-deployed on this chain at known addresses.
     #[serde(default)]
     pub tokens: Vec<Token>,
+    /// URL of a bundled block explorer for this chain, when one was booted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explorer: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -89,6 +92,7 @@ mod tests {
                 address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".into(),
                 decimals: 6,
             }],
+            explorer: Some("http://127.0.0.1:5100".into()),
         }])
     }
 
@@ -113,6 +117,22 @@ mod tests {
         assert_eq!(loaded.chains[0].accounts[0].address, "0xabc");
         assert_eq!(loaded.chains[0].tokens[0].symbol, "USDC");
         assert_eq!(loaded.chains[0].tokens[0].decimals, 6);
+        assert_eq!(
+            loaded.chains[0].explorer.as_deref(),
+            Some("http://127.0.0.1:5100")
+        );
+    }
+
+    #[test]
+    fn explorer_is_omitted_when_absent() {
+        let mut m = sample();
+        m.chains[0].explorer = None;
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(!json.contains("explorer"), "None explorer must not serialize");
+
+        // And a manifest without the field still parses (defaults to None).
+        let loaded: Manifest = serde_json::from_str(&json).unwrap();
+        assert!(loaded.chains[0].explorer.is_none());
     }
 
     #[test]
