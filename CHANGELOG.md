@@ -12,6 +12,11 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Release pipeline** — pushing a `vX.Y.Z` tag publishes to crates.io via a
+  tag-gated workflow: it checks the tag matches `Cargo.toml`, runs tests +
+  `cargo audit`, publishes through crates.io Trusted Publishing (OIDC, no stored
+  token), and cuts a GitHub Release. A weekly `cargo audit` job scans
+  dependencies for advisories. See [RELEASING.md](RELEASING.md).
 - **Block explorer (on by default, `up --bare` to skip)** — boots an Otterscan
   instance per EVM chain, wired to the chain's RPC and listed in the manifest.
   Anvil's native `ots_*` API means no indexer, so every `up` is browsable out of

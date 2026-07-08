@@ -40,6 +40,9 @@ Early WIP, but the **EVM stack works end to end today**. See the
 - [ ] `deploy` command — deploy bundled/custom contracts on demand
 - [ ] CI polish — machine-readable `status --json`, non-interactive mode
 
+Releases are published to crates.io from a version tag — see
+[RELEASING.md](./RELEASING.md).
+
 ## Quickstart
 
 ```sh
