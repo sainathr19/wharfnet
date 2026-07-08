@@ -128,7 +128,10 @@ mod tests {
         let mut m = sample();
         m.chains[0].explorer = None;
         let json = serde_json::to_string(&m).unwrap();
-        assert!(!json.contains("explorer"), "None explorer must not serialize");
+        assert!(
+            !json.contains("explorer"),
+            "None explorer must not serialize"
+        );
 
         // And a manifest without the field still parses (defaults to None).
         let loaded: Manifest = serde_json::from_str(&json).unwrap();

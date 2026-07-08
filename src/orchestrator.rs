@@ -220,7 +220,12 @@ pub fn print_compose(explorer: bool) -> Result<()> {
 }
 
 pub fn up(mode: UpMode, explorer: bool) -> Result<()> {
-    up_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT, mode, explorer)
+    up_in(
+        Path::new(DEFAULT_STATE_DIR),
+        DEFAULT_PROJECT,
+        mode,
+        explorer,
+    )
 }
 
 pub fn down() -> Result<()> {
@@ -257,10 +262,16 @@ fn up_in(base: &Path, project: &str, mode: UpMode, explorer: bool) -> Result<()>
 
     match mode {
         UpMode::Resume if resuming => {
-            println!("⚓ wharfnet: resuming saved session on {} chain(s)...", engines.len())
+            println!(
+                "⚓ wharfnet: resuming saved session on {} chain(s)...",
+                engines.len()
+            )
         }
         UpMode::Resume => {
-            println!("⚓ wharfnet: starting a new persistent session on {} chain(s)...", engines.len())
+            println!(
+                "⚓ wharfnet: starting a new persistent session on {} chain(s)...",
+                engines.len()
+            )
         }
         UpMode::Fresh | UpMode::Reset => {
             println!("⚓ wharfnet: booting {} chain(s)...", engines.len())
@@ -320,7 +331,9 @@ fn up_in(base: &Path, project: &str, mode: UpMode, explorer: bool) -> Result<()>
 
     match mode {
         UpMode::Resume => {
-            println!("\n💾 Persistent: balances, txs & deployments survive `down` → `up --resume`.");
+            println!(
+                "\n💾 Persistent: balances, txs & deployments survive `down` → `up --resume`."
+            );
         }
         UpMode::Fresh if has_saved_session(base) => {
             println!(
@@ -432,7 +445,6 @@ fn rpc_ready(port: u16) -> bool {
 mod tests {
     use super::*;
     use crate::manifest::{Account, ChainEntry, Token};
-    use std::io::{Read as _, Write as _};
     use std::net::TcpListener;
     use tempfile::tempdir;
 
@@ -467,11 +479,19 @@ mod tests {
         assert_eq!(svcs[0].url, "http://127.0.0.1:5100");
         assert_eq!(svcs[0].config_rel_path, "state/otterscan-anvil-1.json");
         // anvil-1 is published on 8545, so the browser points there.
-        assert!(svcs[0].config_json.contains("\"erigonURL\": \"http://127.0.0.1:8545\""));
+        assert!(
+            svcs[0]
+                .config_json
+                .contains("\"erigonURL\": \"http://127.0.0.1:8545\"")
+        );
 
         assert_eq!(svcs[1].service_name, "explorer-anvil-2");
         assert_eq!(svcs[1].host_port, 5101);
-        assert!(svcs[1].config_json.contains("\"erigonURL\": \"http://127.0.0.1:8546\""));
+        assert!(
+            svcs[1]
+                .config_json
+                .contains("\"erigonURL\": \"http://127.0.0.1:8546\"")
+        );
     }
 
     #[test]
@@ -519,7 +539,10 @@ mod tests {
     fn engines_use_distinct_ports_and_chain_ids() {
         let engines = engines();
         let ports: Vec<u16> = engines.iter().map(|e| e.host_port()).collect();
-        let chain_ids: Vec<u64> = engines.iter().map(|e| e.manifest_entry().chain_id).collect();
+        let chain_ids: Vec<u64> = engines
+            .iter()
+            .map(|e| e.manifest_entry().chain_id)
+            .collect();
         assert_eq!(ports, vec![8545, 8546]);
         assert_eq!(chain_ids, vec![31337, 31338]);
         // No two chains may share a host port or the compose file won't bind.
@@ -590,7 +613,10 @@ mod tests {
             compose_path(base),
             Path::new("/tmp/whatever/docker-compose.yml")
         );
-        assert_eq!(manifest_path(base), Path::new("/tmp/whatever/wharfnet.json"));
+        assert_eq!(
+            manifest_path(base),
+            Path::new("/tmp/whatever/wharfnet.json")
+        );
     }
 
     #[test]
