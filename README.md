@@ -31,8 +31,14 @@ test against it locally or in CI.
 # build
 cargo build --release
 
-# boot the local multi-chain network
+# boot the local multi-chain network (fresh every time)
 wharfnet up
+
+# resume where you left off — restores balances, txs & deployments
+wharfnet up --resume
+
+# discard a saved session and boot clean
+wharfnet up --reset
 
 # check what's running
 wharfnet status
@@ -65,11 +71,31 @@ tests) can top up any address on demand:
 The dev accounts start pre-seeded with a balance of each. Regenerate the
 snapshot after editing the token sources with `./scripts/gen-token-state.sh`.
 
+## State & persistence
+
+By default `wharfnet up` boots a **fresh, deterministic** network every time:
+the pre-deployed tokens and seeded accounts are always exactly the same, and
+anything you do at runtime (faucet top-ups, transactions, contract deploys) is
+discarded on `down`. That's the right default for reproducible tests and CI.
+
+When you'd rather pick up where you left off:
+
+| Command | Behaviour |
+| ------- | --------- |
+| `wharfnet up` | Fresh boot from the baked snapshot. Runtime changes are not saved. |
+| `wharfnet up --resume` | Restore the previous session if one exists (else fresh), and **keep saving** — balances, txs, and deployments survive `down` → `up --resume`. |
+| `wharfnet up --reset` | Discard any saved session, then boot fresh. |
+
+Under the hood each chain dumps its state to a per-chain snapshot
+(`.wharfnet/state/session-<chain>.json`) via Anvil's `--state`, flushed on exit
+and periodically while running. `--resume` and `--reset` are mutually exclusive.
+
 ## Status
 
 This repository currently contains the project scaffold and CLI skeleton.
 Engine wrappers (EVM / Solana / Starknet), the faucet, token presets, and the
-CI helper are in progress.
+CI helper are in progress. See the [CHANGELOG](./CHANGELOG.md) for what's landed
+so far.
 
 ## License
 

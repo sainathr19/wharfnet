@@ -14,13 +14,33 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use crate::docker;
-use crate::engine::{Engine, EvmEngine};
+use crate::engine::{Engine, EvmEngine, StateMode};
 use crate::manifest::Manifest;
 use crate::ui;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
 pub(crate) const DEFAULT_STATE_DIR: &str = ".wharfnet";
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// How `up` should treat any previously saved session state.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UpMode {
+    /// Boot fresh from the baked snapshot; leave any saved session untouched.
+    Fresh,
+    /// Restore the saved session if present (else boot fresh) and keep saving.
+    Resume,
+    /// Discard any saved session, then boot fresh.
+    Reset,
+}
+
+impl UpMode {
+    fn state_mode(self) -> StateMode {
+        match self {
+            UpMode::Resume => StateMode::Persistent,
+            UpMode::Fresh | UpMode::Reset => StateMode::Ephemeral,
+        }
+    }
+}
 
 /// Header prepended to every generated compose file (embedded at compile time).
 const COMPOSE_HEADER: &str = include_str!("resources/docker/compose.header.yml");
@@ -42,24 +62,29 @@ fn engines() -> Vec<Box<dyn Engine>> {
     ]
 }
 
-fn render_compose(engines: &[Box<dyn Engine>]) -> String {
+fn render_compose(engines: &[Box<dyn Engine>], mode: StateMode) -> String {
     let mut out = String::from(COMPOSE_HEADER);
     if !out.ends_with('\n') {
         out.push('\n');
     }
     for engine in engines {
-        out.push_str(&engine.compose_service());
+        out.push_str(&engine.compose_service(mode));
     }
     out
 }
 
-/// Write each engine's staged files (chain snapshots, etc.) under the state
-/// dir before boot. Engines that share a snapshot write identical bytes to the
-/// same path, so this is idempotent.
-fn stage_files(base: &Path, engines: &[Box<dyn Engine>]) -> Result<()> {
+/// Write each engine's staged files (chain snapshots, session seeds) under the
+/// state dir before boot. A file marked `if_absent` is only written when it
+/// doesn't already exist, so a saved session is never overwritten. Engines that
+/// share a snapshot write identical bytes to the same path, so this is
+/// idempotent.
+fn stage_files(base: &Path, engines: &[Box<dyn Engine>], mode: StateMode) -> Result<()> {
     for engine in engines {
-        for file in engine.staged_files() {
-            let dest = base.join(file.rel_path);
+        for file in engine.staged_files(mode) {
+            let dest = base.join(&file.rel_path);
+            if file.if_absent && dest.exists() {
+                continue;
+            }
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -69,15 +94,44 @@ fn stage_files(base: &Path, engines: &[Box<dyn Engine>]) -> Result<()> {
     Ok(())
 }
 
-/// Print the generated compose file to stdout without booting anything.
-/// Useful for inspecting or debugging what wharfnet will run.
-pub fn print_compose() -> Result<()> {
-    print!("{}", render_compose(&engines()));
+/// Delete every saved per-chain session snapshot under the state dir. Used by
+/// `up --reset` to guarantee a clean slate. Missing dir / files are fine.
+fn clear_sessions(base: &Path) -> Result<()> {
+    let state = base.join("state");
+    let Ok(entries) = fs::read_dir(&state) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        if is_session_file(&entry.file_name().to_string_lossy()) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
     Ok(())
 }
 
-pub fn up() -> Result<()> {
-    up_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT)
+/// Whether any saved per-chain session snapshot exists under the state dir.
+fn has_saved_session(base: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(base.join("state")) else {
+        return false;
+    };
+    entries
+        .flatten()
+        .any(|e| is_session_file(&e.file_name().to_string_lossy()))
+}
+
+fn is_session_file(name: &str) -> bool {
+    name.starts_with("session-") && name.ends_with(".json")
+}
+
+/// Print the generated compose file to stdout without booting anything.
+/// Useful for inspecting or debugging what wharfnet will run.
+pub fn print_compose() -> Result<()> {
+    print!("{}", render_compose(&engines(), StateMode::Ephemeral));
+    Ok(())
+}
+
+pub fn up(mode: UpMode) -> Result<()> {
+    up_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT, mode)
 }
 
 pub fn down() -> Result<()> {
@@ -88,15 +142,32 @@ pub fn status() -> Result<()> {
     status_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT)
 }
 
-fn up_in(base: &Path, project: &str) -> Result<()> {
+fn up_in(base: &Path, project: &str, mode: UpMode) -> Result<()> {
     docker::ensure_available()?;
     let engines = engines();
+    let state_mode = mode.state_mode();
+
+    if mode == UpMode::Reset {
+        clear_sessions(base)?;
+    }
+    // Note whether we're resuming before staging seeds any missing sessions.
+    let resuming = mode == UpMode::Resume && has_saved_session(base);
 
     fs::create_dir_all(base)?;
-    fs::write(compose_path(base), render_compose(&engines))?;
-    stage_files(base, &engines)?;
+    fs::write(compose_path(base), render_compose(&engines, state_mode))?;
+    stage_files(base, &engines, state_mode)?;
 
-    println!("⚓ wharfnet: booting {} chain(s)...", engines.len());
+    match mode {
+        UpMode::Resume if resuming => {
+            println!("⚓ wharfnet: resuming saved session on {} chain(s)...", engines.len())
+        }
+        UpMode::Resume => {
+            println!("⚓ wharfnet: starting a new persistent session on {} chain(s)...", engines.len())
+        }
+        UpMode::Fresh | UpMode::Reset => {
+            println!("⚓ wharfnet: booting {} chain(s)...", engines.len())
+        }
+    }
 
     let pb = ui::spinner("pulling images & starting containers…");
     if let Err(e) = docker::compose_up(&compose_path(base), project) {
@@ -139,6 +210,19 @@ fn up_in(base: &Path, project: &str) -> Result<()> {
             println!("      {:<5} {}", token.symbol, token.address);
         }
     }
+
+    match mode {
+        UpMode::Resume => {
+            println!("\n💾 Persistent: balances, txs & deployments survive `down` → `up --resume`.");
+        }
+        UpMode::Fresh if has_saved_session(base) => {
+            println!(
+                "\nℹ️  A saved session exists. Restore it with `up --resume`, or discard it with `up --reset`."
+            );
+        }
+        _ => {}
+    }
+
     println!("\nTear down with: wharfnet down");
     Ok(())
 }
@@ -244,11 +328,23 @@ mod tests {
 
     #[test]
     fn render_compose_has_header_and_all_services() {
-        let out = render_compose(&engines());
+        let out = render_compose(&engines(), StateMode::Ephemeral);
         assert!(out.starts_with("# Generated by wharfnet"));
         assert!(out.contains("services:"));
         assert!(out.contains("anvil-1:"));
         assert!(out.contains("anvil-2:"));
+    }
+
+    #[test]
+    fn render_compose_reflects_the_state_mode() {
+        let ephemeral = render_compose(&engines(), StateMode::Ephemeral);
+        assert!(ephemeral.contains("--load-state"));
+        assert!(!ephemeral.contains("--state-interval"));
+
+        let persistent = render_compose(&engines(), StateMode::Persistent);
+        assert!(persistent.contains("session-anvil-1.json"));
+        assert!(persistent.contains("session-anvil-2.json"));
+        assert!(persistent.contains("--state-interval"));
     }
 
     #[test]
@@ -278,12 +374,58 @@ mod tests {
     #[test]
     fn stage_files_writes_the_token_snapshot() {
         let dir = tempdir().unwrap();
-        stage_files(dir.path(), &engines()).unwrap();
+        stage_files(dir.path(), &engines(), StateMode::Ephemeral).unwrap();
         let snapshot = dir.path().join("state/anvil-tokens.json");
         assert!(snapshot.exists(), "snapshot should be staged under state/");
         let data = fs::read_to_string(&snapshot).unwrap();
         // Sanity: the snapshot really contains our deployed USDC address.
         assert!(data.contains("5fbdb2315678afecb367f032d93f642f64180aa3"));
+    }
+
+    #[test]
+    fn persistent_staging_seeds_sessions_but_never_clobbers_them() {
+        let dir = tempdir().unwrap();
+
+        // First persistent boot seeds a per-chain session from the baked snapshot.
+        stage_files(dir.path(), &engines(), StateMode::Persistent).unwrap();
+        let session = dir.path().join("state/session-anvil-1.json");
+        assert!(session.exists(), "session should be seeded on first boot");
+        assert!(
+            fs::read_to_string(&session)
+                .unwrap()
+                .contains("5fbdb2315678afecb367f032d93f642f64180aa3")
+        );
+
+        // Simulate accumulated runtime state, then re-stage: it must be preserved.
+        fs::write(&session, "MY SAVED WORK").unwrap();
+        stage_files(dir.path(), &engines(), StateMode::Persistent).unwrap();
+        assert_eq!(fs::read_to_string(&session).unwrap(), "MY SAVED WORK");
+    }
+
+    #[test]
+    fn clear_sessions_removes_only_session_snapshots() {
+        let dir = tempdir().unwrap();
+        let state = dir.path().join("state");
+        fs::create_dir_all(&state).unwrap();
+        fs::write(state.join("session-anvil-1.json"), "a").unwrap();
+        fs::write(state.join("session-anvil-2.json"), "b").unwrap();
+        fs::write(state.join("anvil-tokens.json"), "baked").unwrap();
+
+        assert!(has_saved_session(dir.path()));
+        clear_sessions(dir.path()).unwrap();
+        assert!(!has_saved_session(dir.path()));
+        // The baked snapshot is left intact.
+        assert!(state.join("anvil-tokens.json").exists());
+        assert!(!state.join("session-anvil-1.json").exists());
+        assert!(!state.join("session-anvil-2.json").exists());
+    }
+
+    #[test]
+    fn has_saved_session_false_without_state_dir() {
+        let dir = tempdir().unwrap();
+        assert!(!has_saved_session(dir.path()));
+        // clear on a missing state dir is a no-op, not an error.
+        assert!(clear_sessions(dir.path()).is_ok());
     }
 
     #[test]

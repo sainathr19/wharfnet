@@ -20,7 +20,20 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Boot the local multi-chain network.
-    Up,
+    ///
+    /// By default every boot starts fresh from the pre-deployed tokens and
+    /// seeded accounts. Use `--resume` to restore (and keep saving) the
+    /// previous session, or `--reset` to discard a saved session and start clean.
+    Up {
+        /// Restore the previous session's state if a saved snapshot exists,
+        /// otherwise boot fresh. Your work then persists across
+        /// `down` → `up --resume`.
+        #[arg(long, conflicts_with = "reset")]
+        resume: bool,
+        /// Discard any saved session snapshot and boot a clean, fresh network.
+        #[arg(long)]
+        reset: bool,
+    },
     /// Tear down the local network and clean up state.
     Down,
     /// Show the status and endpoints of running chains.
@@ -57,7 +70,16 @@ fn main() {
 /// `Result` and is unit-testable.
 fn run(command: Commands) -> anyhow::Result<()> {
     match command {
-        Commands::Up => orchestrator::up(),
+        Commands::Up { resume, reset } => {
+            let mode = if reset {
+                orchestrator::UpMode::Reset
+            } else if resume {
+                orchestrator::UpMode::Resume
+            } else {
+                orchestrator::UpMode::Fresh
+            };
+            orchestrator::up(mode)
+        }
         Commands::Down => orchestrator::down(),
         Commands::Status => orchestrator::status(),
         Commands::Compose => orchestrator::print_compose(),
@@ -84,7 +106,27 @@ mod tests {
     #[test]
     fn parses_up_command() {
         let cli = Cli::try_parse_from(["wharfnet", "up"]).unwrap();
-        assert!(matches!(cli.command, Commands::Up));
+        assert!(matches!(
+            cli.command,
+            Commands::Up {
+                resume: false,
+                reset: false
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_up_resume_and_reset_flags() {
+        let resume = Cli::try_parse_from(["wharfnet", "up", "--resume"]).unwrap();
+        assert!(matches!(resume.command, Commands::Up { resume: true, .. }));
+
+        let reset = Cli::try_parse_from(["wharfnet", "up", "--reset"]).unwrap();
+        assert!(matches!(reset.command, Commands::Up { reset: true, .. }));
+    }
+
+    #[test]
+    fn up_resume_and_reset_are_mutually_exclusive() {
+        assert!(Cli::try_parse_from(["wharfnet", "up", "--resume", "--reset"]).is_err());
     }
 
     #[test]
@@ -167,7 +209,11 @@ mod tests {
             return;
         }
         let _ = run(Commands::Down); // clean any prior state
-        run(Commands::Up).expect("up should succeed");
+        run(Commands::Up {
+            resume: false,
+            reset: false,
+        })
+        .expect("up should succeed");
         run(Commands::Status).expect("status should succeed");
         run(Commands::Down).expect("down should succeed");
     }
