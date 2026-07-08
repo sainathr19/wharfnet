@@ -113,6 +113,27 @@ manifest and printed by `status`:
 | anvil-1 | `http://127.0.0.1:8545` | `http://127.0.0.1:5100` |
 | anvil-2 | `http://127.0.0.1:8546` | `http://127.0.0.1:5101` |
 
+## EVM chain control
+
+Drive a running localnet with thin wrappers over Anvil's cheat RPCs, grouped
+under `wharfnet evm`. Each takes a `--chain` selector (`evm` for every EVM chain,
+or a name like `anvil-1`; defaults to `evm`):
+
+```sh
+wharfnet evm mine 10                 # mine 10 blocks
+wharfnet evm increase-time 86400     # fast-forward time by a day
+wharfnet evm warp 1893456000         # set the next block to an absolute Unix time
+wharfnet evm impersonate 0xd8dA…6045 # then: cast send … --from 0xd8dA…6045 --unlocked
+wharfnet evm impersonate 0xd8dA…6045 --stop
+wharfnet evm snapshot                # prints an id, e.g. 0x1
+wharfnet evm revert 0x1              # roll state back to that snapshot
+```
+
+`impersonate` lets you send transactions as **any** address with no private key
+(great with forked state), and `snapshot`/`revert` give tests a cheap reset
+point. These live under `evm` because they're Anvil-specific — other chain kinds
+will get their own namespaces (`wharfnet solana …`, etc.).
+
 ## State & persistence
 
 By default `wharfnet up` boots a **fresh, deterministic** network every time:

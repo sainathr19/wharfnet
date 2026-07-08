@@ -1,7 +1,9 @@
 //! wharfnet — one-command localnet for EVM, Solana & Starknet.
 
+mod control;
 mod docker;
 mod engine;
+mod evm;
 mod faucet;
 mod manifest;
 mod orchestrator;
@@ -62,8 +64,65 @@ enum Commands {
         #[arg(long)]
         token: Option<String>,
     },
+    /// EVM chain controls: mine, advance time, impersonate, snapshot/revert.
+    Evm {
+        #[command(subcommand)]
+        command: EvmCommands,
+    },
     /// Deploy the pre-baked test tokens and contracts.
     Deploy,
+}
+
+/// EVM-specific chain controls, grouped under `wharfnet evm …`. These wrap
+/// Anvil's cheat RPCs, so they're intentionally not root commands — other chain
+/// kinds get their own namespaces with their own verbs.
+#[derive(Subcommand)]
+enum EvmCommands {
+    /// Mine blocks on a chain.
+    Mine {
+        /// Number of blocks to mine.
+        #[arg(default_value_t = 1)]
+        count: u64,
+        /// Target chain — `evm` for every EVM chain, or a name like `anvil-1`.
+        #[arg(long, default_value = "evm")]
+        chain: String,
+    },
+    /// Fast-forward chain time by N seconds (mines a block to apply it).
+    IncreaseTime {
+        /// Seconds to advance.
+        seconds: u64,
+        #[arg(long, default_value = "evm")]
+        chain: String,
+    },
+    /// Set the next block's timestamp to an absolute Unix time (mines a block).
+    Warp {
+        /// Unix timestamp in seconds.
+        timestamp: u64,
+        #[arg(long, default_value = "evm")]
+        chain: String,
+    },
+    /// Impersonate an account so you can send txs as it — no private key needed.
+    Impersonate {
+        /// Address to impersonate.
+        address: String,
+        /// Stop impersonating the address instead.
+        #[arg(long)]
+        stop: bool,
+        #[arg(long, default_value = "evm")]
+        chain: String,
+    },
+    /// Snapshot chain state; prints an id you can `revert` to later.
+    Snapshot {
+        #[arg(long, default_value = "evm")]
+        chain: String,
+    },
+    /// Revert chain state to a snapshot id from `wharfnet evm snapshot`.
+    Revert {
+        /// Snapshot id (e.g. `0x1`).
+        id: String,
+        #[arg(long, default_value = "evm")]
+        chain: String,
+    },
 }
 
 fn main() {
@@ -100,6 +159,18 @@ fn run(command: Commands) -> anyhow::Result<()> {
             amount,
             token,
         } => faucet::run(&chain, &address, amount, token.as_deref()),
+        Commands::Evm { command } => match command {
+            EvmCommands::Mine { count, chain } => control::mine(&chain, count),
+            EvmCommands::IncreaseTime { seconds, chain } => control::increase_time(&chain, seconds),
+            EvmCommands::Warp { timestamp, chain } => control::warp(&chain, timestamp),
+            EvmCommands::Impersonate {
+                address,
+                stop,
+                chain,
+            } => control::impersonate(&chain, &address, stop),
+            EvmCommands::Snapshot { chain } => control::snapshot(&chain),
+            EvmCommands::Revert { id, chain } => control::revert(&chain, &id),
+        },
         Commands::Deploy => anyhow::bail!("deploy not yet implemented"),
     }
 }
@@ -198,6 +269,49 @@ mod tests {
             Commands::Faucet { amount, .. } => assert_eq!(amount, 100),
             _ => panic!("expected faucet command"),
         }
+    }
+
+    #[test]
+    fn parses_evm_control_commands() {
+        // `evm mine`: count defaults to 1, chain defaults to evm.
+        let cli = Cli::try_parse_from(["wharfnet", "evm", "mine"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Evm {
+                command: EvmCommands::Mine { count: 1, ref chain }
+            } if chain == "evm"
+        ));
+
+        let cli =
+            Cli::try_parse_from(["wharfnet", "evm", "mine", "10", "--chain", "anvil-2"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Evm {
+                command: EvmCommands::Mine { count: 10, ref chain }
+            } if chain == "anvil-2"
+        ));
+
+        // `evm impersonate --stop`
+        let cli =
+            Cli::try_parse_from(["wharfnet", "evm", "impersonate", "0xabc", "--stop"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Evm {
+                command: EvmCommands::Impersonate { stop: true, .. }
+            }
+        ));
+
+        // `evm revert <id>`
+        let cli = Cli::try_parse_from(["wharfnet", "evm", "revert", "0x1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Evm {
+                command: EvmCommands::Revert { ref id, .. }
+            } if id == "0x1"
+        ));
+
+        // the old flat forms no longer exist at root
+        assert!(Cli::try_parse_from(["wharfnet", "mine"]).is_err());
     }
 
     #[test]

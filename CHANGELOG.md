@@ -12,6 +12,11 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **EVM chain-control commands** — `wharfnet evm mine`, `increase-time`, `warp`,
+  `impersonate`, `snapshot`, and `revert` wrap Anvil's cheat RPCs to drive a
+  running localnet: advance blocks/time, send as any address without a key, and
+  snapshot/revert state for test isolation. Grouped under `evm` so each chain
+  kind can own its own control verbs.
 - **Release pipeline** — pushing a `vX.Y.Z` tag publishes to crates.io via a
   tag-gated workflow: it checks the tag matches `Cargo.toml`, runs tests +
   `cargo audit`, publishes through crates.io Trusted Publishing (OIDC, no stored
