@@ -30,6 +30,8 @@ Early WIP, but the **EVM stack works end to end today**. See the
 - [x] Pre-deployed ERC-20 test tokens (USDC, WBTC) at fixed addresses, public `mint`
 - [x] Block explorer (Otterscan) per EVM chain, on by default
 - [x] Persistent state — `up --resume` / `up --reset`
+- [x] Optional `wharfnet.toml` to customise the chain topology
+- [x] EVM chain control — `wharfnet evm mine | warp | impersonate | snapshot | revert`
 - [x] Endpoints manifest — `.wharfnet/wharfnet.json`
 - [x] Boot waits for readiness; `down` tears it all down (CI-friendly)
 
@@ -76,6 +78,30 @@ wharfnet deploy
 # shut everything down
 wharfnet down
 ```
+
+## Configuration
+
+wharfnet runs zero-config — two Anvil chains by default. To customise the chain
+topology, drop a `wharfnet.toml` in your project root:
+
+```toml
+# wharfnet.toml — omit entirely for the built-in defaults
+[[chains]]
+name = "anvil-1"
+port = 8545
+chain_id = 31337
+block_time = 1      # optional, defaults to 1
+
+[[chains]]
+name = "l2"
+port = 8546
+chain_id = 42161
+```
+
+Each chain needs a unique `name`, `port`, and `chain_id`; `kind` defaults to
+`evm` (the only kind today). Accounts and test tokens come from the baked presets
+and aren't configured here. Run `wharfnet compose` to see the resolved setup —
+and to catch config errors — without booting anything.
 
 ## Test tokens
 

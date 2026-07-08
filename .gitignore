@@ -1,6 +1,10 @@
 /target
 .wharfnet/
 
+# A wharfnet.toml is a downstream project's config; never commit one from this
+# repo (it would change wharfnet's own dev/test behaviour).
+/wharfnet.toml
+
 # Foundry build artifacts (the token sources compile inside a container; these
 # only appear if you run `forge` in src/resources/contracts/ directly).
 src/resources/contracts/out/

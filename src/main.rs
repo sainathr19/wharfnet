@@ -1,5 +1,6 @@
 //! wharfnet — one-command localnet for EVM, Solana & Starknet.
 
+mod config;
 mod control;
 mod docker;
 mod engine;
