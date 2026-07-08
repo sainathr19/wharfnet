@@ -12,6 +12,10 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Block explorer (on by default, `up --bare` to skip)** — boots an Otterscan
+  instance per EVM chain, wired to the chain's RPC and listed in the manifest.
+  Anvil's native `ots_*` API means no indexer, so every `up` is browsable out of
+  the box; `--bare` runs just the chains.
 - **Persistent state (`up --resume` / `up --reset`)** — resume your last session
   or wipe it and start clean; plain `up` still boots fresh. Keeps balances, txs,
   and deployments across `down` so you can stop and pick up where you left off.
