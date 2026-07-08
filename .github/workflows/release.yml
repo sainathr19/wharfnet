@@ -1,0 +1,92 @@
+name: Release
+
+# Cut a release by pushing a semver tag on `main`, e.g. `v0.1.0`.
+# The tag must match the version in Cargo.toml.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*" # pre-releases: v1.2.3-rc.1
+
+# Least privilege by default; jobs opt into more only where needed.
+permissions:
+  contents: read
+
+# Never cancel an in-flight release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Everything that must be true before we touch the registry: the tag matches
+  # the crate version, the crate tests pass, dependencies have no known
+  # advisories, and the package actually builds from its published form.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    env:
+      WHARFNET_SKIP_DOCKER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tag matches Cargo.toml version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
+          echo "tag=$tag  crate=$crate"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::tag v$tag does not match Cargo.toml version $crate"
+            exit 1
+          fi
+
+      - name: Tests
+        run: cargo test --all-features --locked
+
+      - name: Audit dependencies (RustSec)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
+      - name: Package builds from its published form
+        run: cargo publish --dry-run --locked
+
+  # Publish with a short-lived OIDC token via crates.io Trusted Publishing —
+  # no long-lived registry secret is stored in the repo.
+  publish:
+    name: Publish to crates.io
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # required for OIDC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Authenticate to crates.io (Trusted Publishing)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: cargo publish
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  # Cut the GitHub Release once the crate is live.
+  github-release:
+    name: GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
