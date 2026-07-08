@@ -172,9 +172,10 @@ mod tests {
 
     #[test]
     fn parses_faucet_with_token_flag() {
-        let cli =
-            Cli::try_parse_from(["wharfnet", "faucet", "anvil-1", "0xabc", "50", "--token", "USDC"])
-                .unwrap();
+        let cli = Cli::try_parse_from([
+            "wharfnet", "faucet", "anvil-1", "0xabc", "50", "--token", "USDC",
+        ])
+        .unwrap();
         match cli.command {
             Commands::Faucet {
                 chain,
@@ -216,6 +217,11 @@ mod tests {
     }
 
     fn docker_available() -> bool {
+        // Let CI skip the docker-backed lifecycle test (image pulls + container
+        // boot) while still running every other test.
+        if std::env::var_os("WHARFNET_SKIP_DOCKER_TESTS").is_some() {
+            return false;
+        }
         std::process::Command::new("docker")
             .args(["compose", "version"])
             .output()

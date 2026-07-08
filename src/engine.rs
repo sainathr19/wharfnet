@@ -164,9 +164,7 @@ impl Engine for EvmEngine {
         // `--state` loads the session snapshot if present and dumps back to it
         // on exit and every interval, so a crash-restart resumes too.
         let state_args = match mode {
-            StateMode::Ephemeral => {
-                r#""--load-state", "/state/anvil-tokens.json""#.to_string()
-            }
+            StateMode::Ephemeral => r#""--load-state", "/state/anvil-tokens.json""#.to_string(),
             StateMode::Persistent => format!(
                 r#""--state", "/{session}", "--state-interval", "{interval}""#,
                 session = self.session_rel_path(),
@@ -254,8 +252,14 @@ mod tests {
     fn ephemeral_compose_loads_baked_tokens_without_dumping() {
         let yaml = EvmEngine::anvil("anvil-1", 8545, 31337).compose_service(StateMode::Ephemeral);
         assert!(yaml.contains("\"--load-state\", \"/state/anvil-tokens.json\""));
-        assert!(!yaml.contains("--state-interval"), "must not dump when ephemeral");
-        assert!(!yaml.contains("--dump-state"), "must not dump when ephemeral");
+        assert!(
+            !yaml.contains("--state-interval"),
+            "must not dump when ephemeral"
+        );
+        assert!(
+            !yaml.contains("--dump-state"),
+            "must not dump when ephemeral"
+        );
         // The whole state dir is mounted so persistent runs can write dumps.
         assert!(yaml.contains("./state:/state"));
     }
@@ -266,7 +270,10 @@ mod tests {
         assert!(yaml.contains("\"--state\", \"/state/session-anvil-1.json\""));
         assert!(yaml.contains("\"--state-interval\", \"5\""));
         // Uses --state (load+dump), not the ephemeral read-only load.
-        assert!(!yaml.contains("--load-state"), "persistent uses --state, not --load-state");
+        assert!(
+            !yaml.contains("--load-state"),
+            "persistent uses --state, not --load-state"
+        );
     }
 
     #[test]

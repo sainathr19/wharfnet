@@ -152,10 +152,17 @@ fn fund_token(
     amount: u64,
     token: &Token,
 ) -> Result<()> {
-    let pb = ui::spinner(format!("{}: minting {amount} {}…", chain.name, token.symbol));
+    let pb = ui::spinner(format!(
+        "{}: minting {amount} {}…",
+        chain.name, token.symbol
+    ));
     let result = (|| -> Result<()> {
         let raw = (amount as u128)
-            .checked_mul(10u128.checked_pow(token.decimals as u32).context("bad decimals")?)
+            .checked_mul(
+                10u128
+                    .checked_pow(token.decimals as u32)
+                    .context("bad decimals")?,
+            )
             .context("token amount too large")?;
         let signer = chain
             .accounts
@@ -195,7 +202,12 @@ fn fund_token(
     }
 }
 
-fn eth_balance_wei(compose: &Path, project: &str, chain: &ChainEntry, address: &str) -> Result<u128> {
+fn eth_balance_wei(
+    compose: &Path,
+    project: &str,
+    chain: &ChainEntry,
+    address: &str,
+) -> Result<u128> {
     let out = cast(
         compose,
         project,
@@ -361,7 +373,10 @@ mod tests {
         let chain = evm_chain();
         assert!(chain.kind == "evm");
         assert!(chain.name == "anvil-1");
-        assert!(find_token(&chain, "usdc").is_ok(), "symbol match is case-insensitive");
+        assert!(
+            find_token(&chain, "usdc").is_ok(),
+            "symbol match is case-insensitive"
+        );
         assert!(find_token(&chain, "WBTC").is_err());
     }
 
