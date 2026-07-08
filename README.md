@@ -103,6 +103,17 @@ Each chain needs a unique `name`, `port`, and `chain_id`; `kind` defaults to
 and aren't configured here. Run `wharfnet compose` to see the resolved setup —
 and to catch config errors — without booting anything.
 
+By default wharfnet reads `./wharfnet.toml`. Point at a different file with
+`--config <path>` (or `-c`) on `up`/`compose`, or the `WHARFNET_CONFIG` env var —
+handy for keeping several topologies (e.g. `local.toml`, `fork.toml`). An
+explicitly named file that doesn't exist is an error; a missing default just
+falls back to the built-ins.
+
+```sh
+wharfnet up --config fork.toml
+WHARFNET_CONFIG=ci.toml wharfnet up
+```
+
 ## Test tokens
 
 Every EVM chain boots with standard test tokens pre-deployed at fixed addresses

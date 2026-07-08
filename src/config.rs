@@ -13,8 +13,10 @@ use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::Path;
 
-/// Config file looked up in the current working directory.
+/// Config file looked up in the current working directory by default.
 pub const CONFIG_FILE: &str = "wharfnet.toml";
+/// Environment variable that overrides the config path (below an explicit flag).
+pub const CONFIG_ENV: &str = "WHARFNET_CONFIG";
 
 fn default_kind() -> String {
     "evm".to_string()
@@ -70,10 +72,28 @@ impl Default for Config {
     }
 }
 
-/// Load the config from the working directory, or the built-in defaults if no
-/// `wharfnet.toml` is present.
-pub fn load() -> Result<Config> {
+/// Resolve and load the config. Precedence: an explicit `--config` path, then
+/// the `WHARFNET_CONFIG` env var, then `./wharfnet.toml`.
+///
+/// A path requested explicitly (flag or env) **must** exist — a missing one is a
+/// loud error. The default `./wharfnet.toml` is optional: absent, wharfnet falls
+/// back to the built-in defaults so it stays zero-config.
+pub fn load(explicit: Option<&Path>) -> Result<Config> {
+    if let Some(path) = explicit {
+        return load_required(path, "--config");
+    }
+    if let Some(env) = std::env::var_os(CONFIG_ENV) {
+        return load_required(Path::new(&env), CONFIG_ENV);
+    }
     load_from(Path::new(CONFIG_FILE))
+}
+
+/// Load a config path the user asked for explicitly; error if it's missing.
+fn load_required(path: &Path, source: &str) -> Result<Config> {
+    if !path.exists() {
+        bail!("config file not found: {} (from {source})", path.display());
+    }
+    load_from(path)
 }
 
 /// Load and validate the config at `path`, or return defaults if it's missing.
@@ -148,6 +168,31 @@ mod tests {
         let dir = tempdir().unwrap();
         let c = load_from(&dir.path().join(CONFIG_FILE)).unwrap();
         assert_eq!(c.chains.len(), 2);
+    }
+
+    #[test]
+    fn explicit_path_must_exist() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("nope.toml");
+        let err = load(Some(&missing)).unwrap_err();
+        assert!(err.to_string().contains("config file not found"), "{err}");
+    }
+
+    #[test]
+    fn explicit_path_is_loaded_when_present() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "solo"
+            port = 7000
+            chain_id = 99
+            "#,
+        );
+        let c = load(Some(&path)).unwrap();
+        assert_eq!(c.chains.len(), 1);
+        assert_eq!(c.chains[0].name, "solo");
     }
 
     #[test]
