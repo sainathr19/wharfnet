@@ -24,6 +24,10 @@ pub struct ChainEntry {
     /// Test tokens pre-deployed on this chain at known addresses.
     #[serde(default)]
     pub tokens: Vec<Token>,
+    /// Canonical infra contracts pre-deployed at their chain-agnostic addresses
+    /// (Multicall3, Permit2, the CREATE2 deployer).
+    #[serde(default)]
+    pub contracts: Vec<Contract>,
     /// URL of a bundled block explorer for this chain, when one was booted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explorer: Option<String>,
@@ -44,6 +48,14 @@ pub struct Token {
     pub name: String,
     pub address: String,
     pub decimals: u8,
+}
+
+/// A canonical infra contract pre-deployed at its real, chain-agnostic address
+/// (e.g. Multicall3, Permit2) so tooling that hardcodes the address just works.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Contract {
+    pub name: String,
+    pub address: String,
 }
 
 impl Manifest {
@@ -92,6 +104,10 @@ mod tests {
                 address: "0x5FbDB2315678afecb367f032d93F642f64180aa3".into(),
                 decimals: 6,
             }],
+            contracts: vec![Contract {
+                name: "Multicall3".into(),
+                address: "0xcA11bde05977b3631167028862bE2a173976CA11".into(),
+            }],
             explorer: Some("http://127.0.0.1:5100".into()),
         }])
     }
@@ -117,6 +133,11 @@ mod tests {
         assert_eq!(loaded.chains[0].accounts[0].address, "0xabc");
         assert_eq!(loaded.chains[0].tokens[0].symbol, "USDC");
         assert_eq!(loaded.chains[0].tokens[0].decimals, 6);
+        assert_eq!(loaded.chains[0].contracts[0].name, "Multicall3");
+        assert_eq!(
+            loaded.chains[0].contracts[0].address,
+            "0xcA11bde05977b3631167028862bE2a173976CA11"
+        );
         assert_eq!(
             loaded.chains[0].explorer.as_deref(),
             Some("http://127.0.0.1:5100")

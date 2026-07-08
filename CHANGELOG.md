@@ -12,6 +12,14 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Presets — canonical contracts & weird tokens** — every EVM chain now boots
+  with Multicall3, Permit2, and the CREATE2 deployer at their real chain-agnostic
+  addresses (Multicall3/Permit2 etched from mainnet bytecode), so viem/ethers/
+  wagmi and CREATE2 deploy tooling work out of the box. Adds three deliberately
+  non-standard test tokens — fee-on-transfer (FEE), rebasing (REB), and
+  no-return-value (NRT) — for token-integration testing against real-world quirks.
+  All baked into the state snapshot; contracts are listed in the manifest and by
+  `status`.
 - **Config file (`wharfnet.toml`)** — customise the chain topology (name, port,
   `chain_id`, `block_time`, and how many chains). Optional: without one, wharfnet
   stays zero-config with its two default Anvil chains. Validated on load (unique

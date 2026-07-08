@@ -9,7 +9,7 @@
 //! embedded into the binary at compile time — edit those templates, not Rust
 //! strings.
 
-use crate::manifest::{Account, ChainEntry, Token};
+use crate::manifest::{Account, ChainEntry, Contract, Token};
 
 /// Internal port the engine listens on inside its container.
 const ANVIL_INTERNAL_PORT: u16 = 8545;
@@ -111,8 +111,12 @@ impl EvmEngine {
     }
 
     /// Test tokens pre-deployed in the loaded state snapshot. Deployed from dev
-    /// account 0 at nonces 0 and 1, so the addresses are deterministic and
+    /// account 0 at fixed nonces, so the addresses are deterministic and
     /// identical on every EVM chain. `mint` is public — the faucet relies on it.
+    ///
+    /// The first two are standard, well-behaved ERC-20s; the rest are
+    /// deliberately "weird" (fee-on-transfer, rebasing, missing return value)
+    /// for token-integration testing. See `resources/contracts/`.
     fn tokens() -> Vec<Token> {
         vec![
             Token {
@@ -126,6 +130,46 @@ impl EvmEngine {
                 name: "Wrapped BTC".to_string(),
                 address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512".to_string(),
                 decimals: 8,
+            },
+            Token {
+                symbol: "FEE".to_string(),
+                name: "Fee Token (fee-on-transfer)".to_string(),
+                address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0".to_string(),
+                decimals: 18,
+            },
+            Token {
+                symbol: "REB".to_string(),
+                name: "Rebasing Token".to_string(),
+                address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9".to_string(),
+                decimals: 18,
+            },
+            Token {
+                symbol: "NRT".to_string(),
+                name: "No Return Token (USDT-style)".to_string(),
+                address: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9".to_string(),
+                decimals: 6,
+            },
+        ]
+    }
+
+    /// Canonical infra contracts baked into the state snapshot at their real,
+    /// chain-agnostic addresses — the same everywhere, so client libraries and
+    /// deploy tooling that hardcode these addresses work out of the box.
+    /// Multicall3 and Permit2 are etched from mainnet bytecode; the CREATE2
+    /// deterministic deployer is deployed by Anvil itself.
+    fn contracts() -> Vec<Contract> {
+        vec![
+            Contract {
+                name: "Multicall3".to_string(),
+                address: "0xcA11bde05977b3631167028862bE2a173976CA11".to_string(),
+            },
+            Contract {
+                name: "Permit2".to_string(),
+                address: "0x000000000022D473030F116dDEE9F6B43aC78BA3".to_string(),
+            },
+            Contract {
+                name: "CREATE2 Deployer".to_string(),
+                address: "0x4e59b44847b379578588920cA78FbF26c0B4956C".to_string(),
             },
         ]
     }
@@ -197,6 +241,7 @@ impl Engine for EvmEngine {
             chain_id: self.chain_id,
             accounts: Self::accounts(),
             tokens: Self::tokens(),
+            contracts: Self::contracts(),
             // Populated by the orchestrator when an explorer is booted.
             explorer: None,
         }
@@ -302,11 +347,28 @@ mod tests {
     fn manifest_entry_lists_the_test_tokens() {
         let entry = EvmEngine::anvil("anvil-1", 8545, 31337).manifest_entry();
         let symbols: Vec<&str> = entry.tokens.iter().map(|t| t.symbol.as_str()).collect();
-        assert_eq!(symbols, vec!["USDC", "WBTC"]);
+        assert_eq!(symbols, vec!["USDC", "WBTC", "FEE", "REB", "NRT"]);
         let usdc = &entry.tokens[0];
         assert_eq!(usdc.address, "0x5FbDB2315678afecb367f032d93F642f64180aa3");
         assert_eq!(usdc.decimals, 6);
         assert_eq!(entry.tokens[1].decimals, 8);
+        // The weird tokens carry the addresses they deploy to at fixed nonces.
+        assert_eq!(
+            entry.tokens[2].address,
+            "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+        );
+        assert_eq!(entry.tokens[4].decimals, 6);
+    }
+
+    #[test]
+    fn manifest_entry_lists_the_canonical_infra_contracts() {
+        let entry = EvmEngine::anvil("anvil-1", 8545, 31337).manifest_entry();
+        let names: Vec<&str> = entry.contracts.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Multicall3", "Permit2", "CREATE2 Deployer"]);
+        assert_eq!(
+            entry.contracts[0].address,
+            "0xcA11bde05977b3631167028862bE2a173976CA11"
+        );
     }
 
     #[test]
