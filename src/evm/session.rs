@@ -8,8 +8,8 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::manifest::{ChainEntry, Manifest};
-use crate::orchestrator::{compose_path, manifest_path};
+use crate::runtime::manifest::{ChainEntry, Manifest};
+use crate::runtime::orchestrator::{compose_path, manifest_path};
 
 /// Anvil listens here inside its container irrespective of the published host port.
 pub const INTERNAL_RPC: &str = "http://127.0.0.1:8545";
@@ -126,7 +126,7 @@ pub fn validate_address(address: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{Account, ChainEntry, Token};
+    use crate::runtime::manifest::{Account, ChainEntry, Token};
     use tempfile::tempdir;
 
     fn evm_chain() -> ChainEntry {

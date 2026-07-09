@@ -1,16 +1,13 @@
 //! wharfnet — one-command localnet for EVM, Solana & Starknet.
 
-mod config;
-mod control;
-mod docker;
-mod engine;
 mod evm;
-mod faucet;
-mod manifest;
-mod orchestrator;
-mod ui;
+mod runtime;
+#[cfg(test)]
+mod testkit;
 
 use clap::{Parser, Subcommand};
+use evm::{control, faucet};
+use runtime::orchestrator;
 use std::path::PathBuf;
 
 /// One-command localnet for EVM, Solana & Starknet.
@@ -187,6 +184,7 @@ fn run(command: Commands) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::docker_available;
     use clap::CommandFactory;
 
     #[test]
@@ -368,19 +366,6 @@ mod tests {
     #[test]
     fn run_deploy_is_unimplemented_error() {
         assert!(run(Commands::Deploy).is_err());
-    }
-
-    fn docker_available() -> bool {
-        // Let CI skip the docker-backed lifecycle test (image pulls + container
-        // boot) while still running every other test.
-        if std::env::var_os("WHARFNET_SKIP_DOCKER_TESTS").is_some() {
-            return false;
-        }
-        std::process::Command::new("docker")
-            .args(["compose", "version"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
     }
 
     /// Full lifecycle through the public dispatch. Covers `run`'s Up/Down/Status

@@ -13,11 +13,12 @@ use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use crate::config::{self, Config};
-use crate::docker;
-use crate::engine::{Engine, EvmEngine, StateMode};
-use crate::manifest::Manifest;
-use crate::ui;
+use super::config::{self, Config};
+use super::docker;
+use super::engine::{Engine, StateMode};
+use super::manifest::Manifest;
+use super::ui;
+use crate::evm::engine::EvmEngine;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
 pub(crate) const DEFAULT_STATE_DIR: &str = ".wharfnet";
@@ -27,7 +28,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 /// to the chain's RPC via Anvil's `ots_*` API — no indexer or database.
 const OTTERSCAN_IMAGE: &str = "otterscan/otterscan:v2.11.0";
 /// Compose service template for an Otterscan explorer.
-const OTTERSCAN_SERVICE_TEMPLATE: &str = include_str!("resources/docker/services/otterscan.yml");
+const OTTERSCAN_SERVICE_TEMPLATE: &str = include_str!("../resources/docker/services/otterscan.yml");
 /// First host port for explorers; each subsequent chain's explorer takes the next.
 const EXPLORER_BASE_PORT: u16 = 5100;
 
@@ -52,7 +53,7 @@ impl UpMode {
 }
 
 /// Header prepended to every generated compose file (embedded at compile time).
-const COMPOSE_HEADER: &str = include_str!("resources/docker/compose.header.yml");
+const COMPOSE_HEADER: &str = include_str!("../resources/docker/compose.header.yml");
 
 pub(crate) fn compose_path(base: &Path) -> PathBuf {
     base.join("docker-compose.yml")
@@ -246,7 +247,7 @@ pub fn status() -> Result<()> {
     status_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT)
 }
 
-fn up_in(
+pub(crate) fn up_in(
     base: &Path,
     project: &str,
     mode: UpMode,
@@ -369,7 +370,7 @@ fn up_in(
     Ok(())
 }
 
-fn down_in(base: &Path, project: &str) -> Result<()> {
+pub(crate) fn down_in(base: &Path, project: &str) -> Result<()> {
     let compose = compose_path(base);
     if !compose.exists() {
         println!(
@@ -472,7 +473,7 @@ fn rpc_ready(port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{Account, ChainEntry, Contract, Token};
+    use crate::runtime::manifest::{Account, ChainEntry, Contract, Token};
     use std::net::TcpListener;
     use tempfile::tempdir;
 
