@@ -9,10 +9,10 @@
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 
-use crate::evm::{self, INTERNAL_RPC, Session};
-use crate::manifest::{ChainEntry, Token};
-use crate::orchestrator::{DEFAULT_PROJECT, DEFAULT_STATE_DIR};
-use crate::ui;
+use super::session::{self as evm, INTERNAL_RPC, Session};
+use crate::runtime::manifest::{ChainEntry, Token};
+use crate::runtime::orchestrator::{DEFAULT_PROJECT, DEFAULT_STATE_DIR};
+use crate::runtime::ui;
 
 const WEI_PER_ETH: u128 = 1_000_000_000_000_000_000;
 
@@ -191,8 +191,8 @@ fn find_token<'a>(chain: &'a ChainEntry, symbol: &str) -> Result<&'a Token> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{Account, Manifest};
-    use crate::orchestrator::manifest_path;
+    use crate::runtime::manifest::{Account, Manifest};
+    use crate::runtime::orchestrator::manifest_path;
     use tempfile::tempdir;
 
     fn evm_chain() -> ChainEntry {
@@ -276,5 +276,106 @@ mod tests {
         let chain = evm_chain();
         assert!(find_token(&chain, "usdc").is_ok());
         assert!(find_token(&chain, "WBTC").is_err());
+    }
+
+    // ---- docker-backed end-to-end run against a live Anvil chain ----
+    //
+    // Exercises the real funding path (ETH via `anvil_setBalance`, tokens via an
+    // on-chain `mint`) and asserts the balances actually changed on-chain. Only
+    // the error paths above run in CI; this covers the happy path locally.
+
+    use crate::testkit::{Localnet, docker_available};
+
+    /// Leading decimal integer from `cast` output, ignoring any trailing
+    /// `[1e6]`-style annotation newer `cast` versions append.
+    fn parse_uint(out: &str) -> u128 {
+        out.split_whitespace()
+            .next()
+            .expect("cast produced output")
+            .parse()
+            .expect("cast output is a decimal integer")
+    }
+
+    fn eth_wei(session: &Session, chain: &ChainEntry, addr: &str) -> u128 {
+        parse_uint(
+            &session
+                .cast(chain, &["balance", addr, "--rpc-url", INTERNAL_RPC])
+                .unwrap(),
+        )
+    }
+
+    fn token_balance(session: &Session, chain: &ChainEntry, token: &str, addr: &str) -> u128 {
+        parse_uint(
+            &session
+                .cast(
+                    chain,
+                    &[
+                        "call",
+                        token,
+                        "balanceOf(address)(uint256)",
+                        addr,
+                        "--rpc-url",
+                        INTERNAL_RPC,
+                    ],
+                )
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn faucet_funds_eth_and_mints_tokens_on_a_live_chain() {
+        if !docker_available() {
+            eprintln!("skipping faucet e2e: docker unavailable");
+            return;
+        }
+        let net = Localnet::boot("t-faucet", 18545, 313370, 1);
+        // A non-dev address, so it starts with zero ETH and zero tokens.
+        let recipient = "0x000000000000000000000000000000000000dEaD";
+
+        let session = Session::open(net.base(), net.project()).unwrap();
+        let chains = session.targets(net.chain()).unwrap();
+        let chain = chains[0];
+        let usdc = chain
+            .tokens
+            .iter()
+            .find(|t| t.symbol == "USDC")
+            .expect("USDC is baked into the snapshot")
+            .address
+            .clone();
+
+        // 1) Fund native ETH + every bundled token in one shot. Success alone
+        //    proves all five mints (incl. the weird tokens) land without reverting.
+        run_in(net.base(), net.project(), net.chain(), recipient, 100, None)
+            .expect("funding native + all tokens should succeed");
+        assert_eq!(eth_wei(&session, chain, recipient), 100 * WEI_PER_ETH);
+        assert_eq!(
+            token_balance(&session, chain, &usdc, recipient),
+            100_000_000
+        ); // 100 @ 6dp
+
+        // 2) Single-token top-up mints only USDC and leaves ETH untouched.
+        run_in(
+            net.base(),
+            net.project(),
+            net.chain(),
+            recipient,
+            50,
+            Some("USDC"),
+        )
+        .expect("single-token funding should succeed");
+        assert_eq!(
+            token_balance(&session, chain, &usdc, recipient),
+            150_000_000
+        );
+        assert_eq!(eth_wei(&session, chain, recipient), 100 * WEI_PER_ETH);
+
+        // 3) A second full fund is additive — ETH tops up, USDC accrues again.
+        run_in(net.base(), net.project(), net.chain(), recipient, 25, None)
+            .expect("second full funding should succeed");
+        assert_eq!(eth_wei(&session, chain, recipient), 125 * WEI_PER_ETH);
+        assert_eq!(
+            token_balance(&session, chain, &usdc, recipient),
+            175_000_000
+        );
     }
 }

@@ -9,9 +9,9 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::evm::{self, Session};
-use crate::manifest::ChainEntry;
-use crate::orchestrator::{DEFAULT_PROJECT, DEFAULT_STATE_DIR};
+use super::session::{self as evm, Session};
+use crate::runtime::manifest::ChainEntry;
+use crate::runtime::orchestrator::{DEFAULT_PROJECT, DEFAULT_STATE_DIR};
 
 /// Open the localnet and run `f` against every EVM chain matching `selector`.
 fn for_each_target<F>(base: &Path, project: &str, selector: &str, mut f: F) -> Result<()>
@@ -180,8 +180,8 @@ fn block_timestamp(session: &Session, chain: &ChainEntry) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{Account, ChainEntry, Manifest};
-    use crate::orchestrator::manifest_path;
+    use crate::runtime::manifest::{Account, ChainEntry, Manifest};
+    use crate::runtime::orchestrator::manifest_path;
     use tempfile::tempdir;
 
     fn evm_chain() -> ChainEntry {
@@ -250,5 +250,92 @@ mod tests {
         write_manifest(dir.path(), vec![evm_chain()]);
         let err = impersonate_in(dir.path(), "p", "evm", "0xnothex", false).unwrap_err();
         assert!(err.to_string().contains("valid EVM address"), "{err}");
+    }
+
+    // ---- docker-backed end-to-end run against a live Anvil chain ----
+    //
+    // The tests above only cover the pre-flight checks; these drive each cheat
+    // RPC against a real chain and assert the observable effect (blocks mined,
+    // clock advanced, state rolled back). Self-skips without Docker.
+
+    use crate::testkit::{Localnet, docker_available};
+
+    /// Leading integer from `cast` output, accepting decimal or `0x` hex.
+    fn parse_u64(out: &str) -> u64 {
+        let tok = out.split_whitespace().next().expect("cast produced output");
+        match tok.strip_prefix("0x") {
+            Some(hex) => u64::from_str_radix(hex, 16).unwrap(),
+            None => tok.parse().unwrap(),
+        }
+    }
+
+    fn block(session: &Session, chain: &ChainEntry) -> u64 {
+        parse_u64(&session.block_number(chain).unwrap())
+    }
+
+    fn timestamp(session: &Session, chain: &ChainEntry) -> u64 {
+        parse_u64(&block_timestamp(session, chain).unwrap())
+    }
+
+    #[test]
+    fn evm_controls_drive_a_live_chain() {
+        if !docker_available() {
+            eprintln!("skipping evm control e2e: docker unavailable");
+            return;
+        }
+        // A large block time freezes auto-mining, so every block below comes
+        // from an explicit cheat RPC and the counts stay deterministic.
+        let net = Localnet::boot("t-control", 18546, 313380, 3600);
+        let (base, project, name) = (net.base(), net.project(), net.chain());
+
+        let session = Session::open(base, project).unwrap();
+        let chains = session.targets(name).unwrap();
+        let chain = chains[0];
+
+        // mine: block height advances by exactly the requested count.
+        let start = block(&session, chain);
+        mine_in(base, project, name, 5).unwrap();
+        assert_eq!(block(&session, chain), start + 5, "mine 5 → +5 blocks");
+
+        // snapshot / revert: capture a marker, move past it, then roll back to it.
+        // (The command only prints the id, so grab it directly for the revert.)
+        let id = session
+            .cast_rpc(chain, "evm_snapshot", &[])
+            .unwrap()
+            .trim()
+            .trim_matches('"')
+            .to_string();
+        mine_in(base, project, name, 3).unwrap();
+        assert_eq!(block(&session, chain), start + 8);
+        revert_in(base, project, name, &id).unwrap();
+        assert_eq!(
+            block(&session, chain),
+            start + 5,
+            "revert rolls state back to the snapshot"
+        );
+        // And the snapshot command itself runs cleanly against a live chain.
+        snapshot_in(base, project, name).unwrap();
+
+        // increase-time: mines a block and moves the clock forward by >= delta.
+        let t0 = timestamp(&session, chain);
+        increase_time_in(base, project, name, 3600).unwrap();
+        assert!(
+            timestamp(&session, chain) >= t0 + 3600,
+            "clock advances by at least the requested seconds"
+        );
+
+        // warp: pins the next block's timestamp to an absolute value.
+        let target = timestamp(&session, chain) + 100_000;
+        warp_in(base, project, name, target).unwrap();
+        assert_eq!(
+            timestamp(&session, chain),
+            target,
+            "warp sets the exact timestamp"
+        );
+
+        // impersonate: starting and stopping both succeed against a live chain.
+        let whale = "0x000000000000000000000000000000000000dEaD";
+        impersonate_in(base, project, name, whale, false).unwrap();
+        impersonate_in(base, project, name, whale, true).unwrap();
     }
 }
