@@ -47,6 +47,22 @@ Early WIP, but the **EVM stack works end to end today**. See the
 Releases are published to crates.io from a version tag — see
 [RELEASING.md](./RELEASING.md).
 
+## Prerequisites
+
+wharfnet runs each chain as a container, so it needs **Docker with the Compose
+plugin** (`docker compose`) and a running daemon. Every command that boots or
+drives a chain — `up`, `down`, `faucet`, and `wharfnet evm …` — shells out to
+`docker compose`, so CI runners need a Docker daemon available too.
+
+You do **not** need Foundry, a Solana toolchain, or a Starknet devnet installed:
+each chain runs from a pinned image (Anvil today) and `cast` runs inside the
+container — installing Docker is the whole setup. Building from source also needs
+a stable **Rust** toolchain (see [Quickstart](#quickstart)).
+
+Without Docker, chain commands fail fast with a clear message; only
+`wharfnet compose` (render the Compose file) and `wharfnet status` (read the
+manifest) run without it.
+
 ## Quickstart
 
 ```sh
