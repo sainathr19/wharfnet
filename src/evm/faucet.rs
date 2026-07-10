@@ -1,74 +1,45 @@
-//! The faucet: fund an address on a running localnet.
+//! The EVM funder: fund an address on a running Anvil chain.
 //!
-//! `wharfnet faucet <chain> <address> <amount>` tops up the native coin **and**
-//! every bundled test token; `--token <SYMBOL>` restricts it to one token.
-//!
-//! `<chain>` matches either a chain kind (`evm`) — funding the address on every
-//! matching chain — or a specific chain name (`anvil-1`).
+//! Tops up the native coin via `anvil_setBalance` and mints the bundled ERC-20
+//! test tokens via their public `mint`, all through `cast` inside the chain's
+//! container. Called by the faucet coordinator (see [`crate::faucet`]), which
+//! resolves the target chain from the manifest and dispatches here for
+//! `kind = "evm"`.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::path::Path;
 
 use super::session::{self as evm, INTERNAL_RPC, Session};
 use crate::runtime::manifest::{ChainEntry, Token};
-use crate::runtime::orchestrator::{DEFAULT_PROJECT, DEFAULT_STATE_DIR};
 use crate::runtime::ui;
 
 const WEI_PER_ETH: u128 = 1_000_000_000_000_000_000;
 
-pub fn run(chain: &str, address: &str, amount: u64, token: Option<&str>) -> Result<()> {
-    run_in(
-        Path::new(DEFAULT_STATE_DIR),
-        DEFAULT_PROJECT,
-        chain,
-        address,
-        amount,
-        token,
-    )
-}
-
-fn run_in(
+/// Fund `address` on a single EVM `chain`: top up native ETH and mint the
+/// bundled tokens (or just `token` when set). Called by the faucet coordinator,
+/// which has already resolved this chain from the manifest.
+pub fn fund_chain(
     base: &Path,
     project: &str,
-    selector: &str,
-    address: &str,
-    amount: u64,
-    token: Option<&str>,
-) -> Result<()> {
-    let session = Session::open(base, project)?;
-    for chain in session.targets(selector)? {
-        fund_chain(&session, chain, address, amount, token)?;
-    }
-    Ok(())
-}
-
-fn fund_chain(
-    session: &Session,
     chain: &ChainEntry,
     address: &str,
     amount: u64,
     token: Option<&str>,
 ) -> Result<()> {
-    if chain.kind != "evm" {
-        bail!(
-            "faucet is not yet supported for {} chains (chain '{}')",
-            chain.kind,
-            chain.name
-        );
-    }
+    let session = Session::open(base, project)?;
     evm::validate_address(address)?;
 
     match token {
         // A single token was requested: fund just that one.
         Some(symbol) => {
             let token = find_token(chain, symbol)?;
-            fund_token(session, chain, address, amount, token)?;
+            fund_token(&session, chain, address, amount, token)?;
         }
         // Default: native coin plus every bundled token.
         None => {
-            fund_eth(session, chain, address, amount)?;
+            fund_eth(&session, chain, address, amount)?;
             for token in &chain.tokens {
-                fund_token(session, chain, address, amount, token)?;
+                fund_token(&session, chain, address, amount, token)?;
             }
         }
     }
@@ -191,9 +162,7 @@ fn find_token<'a>(chain: &'a ChainEntry, symbol: &str) -> Result<&'a Token> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::manifest::{Account, Manifest};
-    use crate::runtime::orchestrator::manifest_path;
-    use tempfile::tempdir;
+    use crate::runtime::manifest::Account;
 
     fn evm_chain() -> ChainEntry {
         ChainEntry {
@@ -218,56 +187,10 @@ mod tests {
         }
     }
 
-    fn write_manifest(base: &Path, chains: Vec<ChainEntry>) {
-        Manifest::new(chains).write(&manifest_path(base)).unwrap();
-    }
-
-    const VALID_ADDR: &str = "0x000000000000000000000000000000000000dEaD";
-
-    // ---- checks that fail before ever shelling out to docker ----
-
-    #[test]
-    fn errors_when_localnet_not_running() {
-        let dir = tempdir().unwrap();
-        let err = run_in(dir.path(), "p", "evm", VALID_ADDR, 100, None).unwrap_err();
-        assert!(err.to_string().contains("not running"), "{err}");
-    }
-
-    #[test]
-    fn errors_when_no_chain_matches_selector() {
-        let dir = tempdir().unwrap();
-        write_manifest(dir.path(), vec![evm_chain()]);
-        let err = run_in(dir.path(), "p", "solana", VALID_ADDR, 100, None).unwrap_err();
-        assert!(err.to_string().contains("no chain matching"), "{err}");
-    }
-
-    #[test]
-    fn errors_on_invalid_address() {
-        let dir = tempdir().unwrap();
-        write_manifest(dir.path(), vec![evm_chain()]);
-        let err = run_in(dir.path(), "p", "evm", "0xnothex", 100, None).unwrap_err();
-        assert!(err.to_string().contains("valid EVM address"), "{err}");
-    }
-
-    #[test]
-    fn errors_on_unknown_token() {
-        let dir = tempdir().unwrap();
-        write_manifest(dir.path(), vec![evm_chain()]);
-        let err = run_in(dir.path(), "p", "evm", VALID_ADDR, 100, Some("DAI")).unwrap_err();
-        assert!(err.to_string().contains("not deployed"), "{err}");
-    }
-
-    #[test]
-    fn errors_on_non_evm_chain() {
-        let dir = tempdir().unwrap();
-        let mut solana = evm_chain();
-        solana.name = "solana-1".into();
-        solana.kind = "solana".into();
-        solana.tokens.clear();
-        write_manifest(dir.path(), vec![solana]);
-        let err = run_in(dir.path(), "p", "solana", VALID_ADDR, 100, None).unwrap_err();
-        assert!(err.to_string().contains("not yet supported"), "{err}");
-    }
+    // The faucet coordinator owns the selector/dispatch error paths (localnet not
+    // running, no chain matches, unsupported kind, invalid address, unknown
+    // token) — those are tested in `crate::faucet`. Here we cover the EVM-only
+    // helpers plus the live-chain funding path.
 
     // ---- pure helpers ----
 
@@ -345,7 +268,7 @@ mod tests {
 
         // 1) Fund native ETH + every bundled token in one shot. Success alone
         //    proves all five mints (incl. the weird tokens) land without reverting.
-        run_in(net.base(), net.project(), net.chain(), recipient, 100, None)
+        crate::faucet::run_in(net.base(), net.project(), net.chain(), recipient, 100, None)
             .expect("funding native + all tokens should succeed");
         assert_eq!(eth_wei(&session, chain, recipient), 100 * WEI_PER_ETH);
         assert_eq!(
@@ -354,7 +277,7 @@ mod tests {
         ); // 100 @ 6dp
 
         // 2) Single-token top-up mints only USDC and leaves ETH untouched.
-        run_in(
+        crate::faucet::run_in(
             net.base(),
             net.project(),
             net.chain(),
@@ -370,7 +293,7 @@ mod tests {
         assert_eq!(eth_wei(&session, chain, recipient), 100 * WEI_PER_ETH);
 
         // 3) A second full fund is additive — ETH tops up, USDC accrues again.
-        run_in(net.base(), net.project(), net.chain(), recipient, 25, None)
+        crate::faucet::run_in(net.base(), net.project(), net.chain(), recipient, 25, None)
             .expect("second full funding should succeed");
         assert_eq!(eth_wei(&session, chain, recipient), 125 * WEI_PER_ETH);
         assert_eq!(

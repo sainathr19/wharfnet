@@ -12,6 +12,17 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Starknet chains** — a `starknet-devnet` chain (`starknet-1`, `:5050`) now
+  boots **by default** alongside the two Anvil chains, with deterministic
+  predeployed accounts, the ETH/STRK fee tokens, and baked **Cairo test tokens**
+  (USDC, WBTC, plus fee-on-transfer FEE and rebasing REB) at fixed addresses —
+  all in the unified `status`/manifest. The chain kind is selectable in
+  `wharfnet.toml` with `kind = "starknet"`.
+- **Starknet faucet** — the same `faucet <chain> <address> [amount] [--token]`
+  command funds Starknet addresses: ETH and STRK through devnet's mint cheat, and
+  the Cairo test tokens through a signed invoke of their public `mint` (submitted
+  by a predeployed dev account, so the recipient needs no key). Amounts are whole
+  units scaled by decimals; funding is additive.
 - **Mainnet forking** — point a chain at a live RPC with `fork_url` (and optional
   `fork_block`) in `wharfnet.toml` and it boots as a fork of that network via
   Anvil's `--fork-url`, so you can test against real balances, contracts, and
@@ -63,6 +74,7 @@ under _Unreleased_ and the CLI surface may still change.
 ### Notes
 
 - `deploy` is scaffolded but not yet implemented.
-- EVM only so far; Solana and Starknet engines are planned.
+- EVM and Starknet chains are supported; Solana is planned. Starknet persistence
+  (`up --resume`/`--reset`) and a bundled explorer are still to come.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

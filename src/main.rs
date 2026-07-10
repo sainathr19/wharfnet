@@ -1,13 +1,14 @@
 //! wharfnet — one-command localnet for EVM, Solana & Starknet.
 
 mod evm;
+mod faucet;
 mod runtime;
 mod starknet;
 #[cfg(test)]
 mod testkit;
 
 use clap::{Parser, Subcommand};
-use evm::{control, faucet};
+use evm::control;
 use runtime::orchestrator;
 use std::path::PathBuf;
 
@@ -57,16 +58,17 @@ enum Commands {
     },
     /// Fund an address from the built-in faucet.
     Faucet {
-        /// Target chain — a kind (e.g. `evm`) to fund every matching chain, or a
-        /// specific chain name (e.g. `anvil-1`).
+        /// Target chain — a kind (`evm`, `starknet`) to fund every matching
+        /// chain, or a specific chain name (e.g. `anvil-1`, `starknet-1`).
         chain: String,
         /// Recipient address.
         address: String,
-        /// Amount in whole units (ETH, or whole tokens scaled by their decimals).
+        /// Amount in whole units (native coin, or whole tokens scaled by their
+        /// decimals).
         #[arg(default_value_t = 100)]
         amount: u64,
-        /// Fund only this token (e.g. `USDC`). Omit to fund the native coin and
-        /// every bundled token.
+        /// Fund only this token (e.g. `USDC`). Omit to fund the native coin(s)
+        /// and every bundled token.
         #[arg(long)]
         token: Option<String>,
     },

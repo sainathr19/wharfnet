@@ -23,6 +23,12 @@ serde_json = "1"
 toml = "0.8"
 indicatif = "0.17"
 console = "0.15"
+# Starknet faucet: sign + submit `mint` invokes to the test tokens. 0.17 drops the
+# `size-of` transitive dep (fails to compile on arm64-macOS + modern Rust). We pin
+# generous resource bounds on the invoke so the RPC-0.9 `estimate_fee` shape is never
+# requested from the RPC-0.8.1 devnet. Its HTTP provider is async → small tokio.
+starknet = "0.17"
+tokio = { version = "1", features = ["rt", "net", "time"] }
 
 [dev-dependencies]
 tempfile = "3"
