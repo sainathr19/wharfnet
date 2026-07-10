@@ -309,7 +309,11 @@ OpenZeppelin dependency). The EVM stack's USDT-style no-return token has no
 analogue — Cairo's ERC-20 ABI returns `bool` by the standard. Under the hood the
 tokens are baked into a devnet **replay log** that `wharfnet up` re-executes on
 boot; regenerate it after editing the sources with
-`./scripts/gen-starknet-token-state.sh` (needs `scarb` + `starkli`).
+`./scripts/gen-starknet-token-state.sh` (needs `scarb` + `cargo` — the
+declare/deploy step runs through `examples/gen_starknet_tokens.rs`, using the same
+JSON-RPC-0.10 [`starknet-rust`] client the faucet does).
+
+[`starknet-rust`]: https://github.com/software-mansion/starknet-rust
 
 ### Funding a Starknet address
 

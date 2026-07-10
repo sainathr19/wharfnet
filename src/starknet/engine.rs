@@ -11,8 +11,9 @@ use crate::runtime::engine::{Engine, HealthProbe, StagedFile, StateMode};
 use crate::runtime::manifest::{Account, ChainEntry, Contract, Token};
 
 /// Pinned devnet image. Pinned (like the Anvil and Otterscan images) so the
-/// predeployed accounts and token addresses below stay reproducible.
-const DEVNET_IMAGE: &str = "shardlabs/starknet-devnet-rs:0.4.3";
+/// predeployed accounts and token addresses below stay reproducible. This tag
+/// speaks JSON-RPC 0.10 (matching the `starknet-rust` client and public testnet).
+const DEVNET_IMAGE: &str = "shardlabs/starknet-devnet-rs:0.9.1";
 
 /// Port devnet listens on inside its container (its default).
 const DEVNET_INTERNAL_PORT: u16 = 5050;
@@ -256,7 +257,7 @@ mod tests {
         for mode in [StateMode::Ephemeral, StateMode::Persistent] {
             let yaml = StarknetEngine::devnet("starknet-1", 5055).compose_service(mode);
             assert!(yaml.contains("starknet-1:"));
-            assert!(yaml.contains("shardlabs/starknet-devnet-rs:0.4.3"));
+            assert!(yaml.contains("shardlabs/starknet-devnet-rs:0.9.1"));
             assert!(yaml.contains("\"--seed\", \"0\""));
             assert!(yaml.contains("\"--accounts\", \"3\""));
             // Published host port maps to the container's 5050.
@@ -440,11 +441,17 @@ mod tests {
         assert_eq!(chain.kind, "starknet");
         let baked: HashSet<String> = chain.accounts.iter().map(|a| norm(&a.address)).collect();
 
-        // ...which must still match what devnet actually predeploys.
-        let (_, accounts_json) = http_get(SN_E2E_PORT, "/predeployed_accounts");
-        let live: Vec<serde_json::Value> = serde_json::from_str(&accounts_json)
-            .unwrap_or_else(|e| panic!("parsing /predeployed_accounts '{accounts_json}': {e}"));
-        let live: HashSet<String> = live
+        // ...which must still match what devnet actually predeploys. On RPC 0.10
+        // the predeployed-accounts cheat is a JSON-RPC method, not a REST route.
+        let resp = rpc(
+            SN_E2E_PORT,
+            r#"{"jsonrpc":"2.0","id":1,"method":"devnet_getPredeployedAccounts","params":{}}"#,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&resp)
+            .unwrap_or_else(|e| panic!("parsing devnet_getPredeployedAccounts '{resp}': {e}"));
+        let live: HashSet<String> = parsed["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no result array in {resp}"))
             .iter()
             .map(|a| norm(a["address"].as_str().unwrap()))
             .collect();

@@ -19,10 +19,12 @@ under _Unreleased_ and the CLI surface may still change.
   all in the unified `status`/manifest. The chain kind is selectable in
   `wharfnet.toml` with `kind = "starknet"`.
 - **Starknet faucet** — the same `faucet <chain> <address> [amount] [--token]`
-  command funds Starknet addresses: ETH and STRK through devnet's mint cheat, and
-  the Cairo test tokens through a signed invoke of their public `mint` (submitted
-  by a predeployed dev account, so the recipient needs no key). Amounts are whole
-  units scaled by decimals; funding is additive.
+  command funds Starknet addresses: ETH and STRK through devnet's `devnet_mint`
+  cheat, and the Cairo test tokens through a signed invoke of their public `mint`
+  (submitted by a predeployed dev account, so the recipient needs no key). Amounts
+  are whole units scaled by decimals; funding is additive. Signing uses the
+  maintained [`starknet-rust`](https://github.com/software-mansion/starknet-rust)
+  client on **JSON-RPC 0.10**, matching the pinned devnet image and public testnet.
 - **Starknet persistence** — `up --resume` / `up --reset` now cover Starknet
   chains too. Each persists to its own `session-<chain>.json` replay log, seeded
   once from the baked tokens and then dumped on every block (devnet mines one per

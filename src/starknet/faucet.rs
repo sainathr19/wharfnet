@@ -9,22 +9,23 @@
 //! Called by the faucet coordinator (see [`crate::faucet`]), which resolves the
 //! target chain from the manifest and dispatches here for `kind = "starknet"`.
 //!
-//! The pinned devnet speaks JSON-RPC 0.8.1 while `starknet-rs` speaks 0.9, so the
-//! invoke pins **all six** resource bounds. That makes `execute_v3` skip the
-//! `estimate_fee` round-trip (whose response shape changed in 0.9) and go straight
-//! to `get_nonce` + `add_invoke_transaction`, both of which are unchanged.
+//! The client (`starknet-rust`) and the pinned devnet both speak JSON-RPC 0.10.
+//! The invoke pins **all six** resource bounds so `execute_v3` skips the
+//! `estimate_fee` round-trip entirely and goes straight to `get_nonce` +
+//! `add_invoke_transaction` — devnet's gas is nominal, so fixed generous bounds
+//! are simpler and more robust than trusting a localnet fee estimate.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use starknet::accounts::{Account, ExecutionEncoding, SingleOwnerAccount};
-use starknet::core::types::{BlockId, BlockTag, Call, Felt};
-use starknet::core::utils::get_selector_from_name;
-use starknet::providers::jsonrpc::HttpTransport;
-use starknet::providers::{JsonRpcClient, Provider, Url};
-use starknet::signers::{LocalWallet, SigningKey};
+use starknet_rust::accounts::{Account, ExecutionEncoding, SingleOwnerAccount};
+use starknet_rust::core::types::{BlockId, BlockTag, Call, Felt};
+use starknet_rust::core::utils::get_selector_from_name;
+use starknet_rust::providers::jsonrpc::HttpTransport;
+use starknet_rust::providers::{JsonRpcClient, Provider, Url};
+use starknet_rust::signers::{LocalWallet, SigningKey};
 
 use crate::runtime::manifest::{ChainEntry, Token};
 use crate::runtime::ui;
@@ -32,7 +33,7 @@ use crate::runtime::ui;
 // Resource-bound maximums for the mint invoke. devnet's gas prices are 1e9
 // fri/gas and the dev account holds 1000 STRK, so these are generous ceilings —
 // the tx is charged devnet's actual (far smaller) usage. Pinning all six lets
-// `starknet-rs` skip fee estimation entirely (see the module docs); the summed
+// `execute_v3` skip fee estimation entirely (see the module docs); the summed
 // cap (~10 STRK) stays well under the signer's balance.
 const L1_GAS: u64 = 1_000_000;
 const L2_GAS: u64 = 100_000_000;
@@ -88,8 +89,8 @@ fn fund_one(
     }
 }
 
-/// Mint `amount` whole coins of a fee token via devnet's `POST /mint` cheat. The
-/// endpoint mints in base units and is additive, so an existing balance is never
+/// Mint `amount` whole coins of a fee token via devnet's `devnet_mint` JSON-RPC
+/// cheat. It mints in base units and is additive, so an existing balance is never
 /// clobbered — matching the EVM faucet's additive ETH top-up.
 fn mint_native(
     chain: &ChainEntry,
@@ -104,11 +105,12 @@ fn mint_native(
     ));
     let result = (|| -> Result<()> {
         let raw = scaled_amount(amount, token.decimals)?;
-        let (host, port) = devnet_endpoint(chain)?;
-        let body = format!(r#"{{"address":"{address}","amount":{raw},"unit":"{unit}"}}"#);
-        let resp = devnet_post(&host, port, "/mint", &body)?;
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"devnet_mint","params":{{"address":"{address}","amount":{raw},"unit":"{unit}"}}}}"#
+        );
+        let resp = devnet_rpc(chain, &body)?;
         if !resp.contains("new_balance") {
-            bail!("devnet /mint did not confirm the deposit: {resp}");
+            bail!("devnet_mint did not confirm the deposit: {resp}");
         }
         Ok(())
     })();
@@ -158,10 +160,9 @@ async fn mint_token_invoke(
 
     let mut account =
         SingleOwnerAccount::new(provider, signer, sender, chain_id, ExecutionEncoding::New);
-    // Read nonces from the latest block. `starknet-rs` (RPC 0.9) renamed the
-    // pending tag, which the RPC-0.8.1 devnet wouldn't accept; `latest` is
-    // understood by both, and devnet mines a block per transaction (its default),
-    // so back-to-back mints see each other's nonce without racing.
+    // Read nonces from the latest block. devnet mines a block per transaction (its
+    // default), so back-to-back mints in one funding run see each other's nonce
+    // without racing — no need for the pending tag.
     account.set_block_id(BlockId::Tag(BlockTag::Latest));
 
     let recipient = Felt::from_hex(address).context("recipient is not a felt")?;
@@ -224,42 +225,44 @@ fn scaled_amount(amount: u64, decimals: u8) -> Result<u128> {
         .context("token amount too large")
 }
 
-/// devnet's cheat endpoints (`/mint`, `/account_balance`) live at the server
-/// root, not under `/rpc`, so derive host+port from the manifest's rpc url.
-fn devnet_endpoint(chain: &ChainEntry) -> Result<(String, u16)> {
+/// POST a JSON-RPC `body` to the chain's `/rpc` endpoint and return the response
+/// body. devnet's cheats (`devnet_mint`, …) live alongside the standard Starknet
+/// methods there, so this drives them with a minimal dependency-free socket,
+/// mirroring the readiness probe's style. Derives host/port/path from the
+/// manifest's rpc url.
+fn devnet_rpc(chain: &ChainEntry, body: &str) -> Result<String> {
     let url = Url::parse(&chain.rpc).with_context(|| format!("invalid rpc url '{}'", chain.rpc))?;
-    let host = url.host_str().unwrap_or("127.0.0.1").to_string();
+    let host = url.host_str().unwrap_or("127.0.0.1");
     let port = url
         .port_or_known_default()
         .context("rpc url has no port to reach devnet on")?;
-    Ok((host, port))
-}
-
-/// Minimal, dependency-free HTTP `POST` to a devnet cheat endpoint, returning the
-/// response body. Mirrors the readiness probe's raw-socket style.
-fn devnet_post(host: &str, port: u16, path: &str, json: &str) -> Result<String> {
+    let path = url.path();
     let mut stream = TcpStream::connect(format!("{host}:{port}"))
         .with_context(|| format!("connecting to devnet at {host}:{port} — is the localnet up?"))?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.set_write_timeout(Some(Duration::from_secs(10)))?;
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        json.len(),
-        json
+        body.len(),
+        body
     );
     stream.write_all(request.as_bytes())?;
     let mut resp = String::new();
     stream.read_to_string(&mut resp)?;
-    let (head, body) = resp
+    let (head, response_body) = resp
         .split_once("\r\n\r\n")
         .context("devnet returned a malformed HTTP response")?;
     if !head.starts_with("HTTP/1.1 200") {
         bail!(
-            "devnet {path} failed: {}",
+            "devnet rpc call failed: {}",
             head.lines().next().unwrap_or("").trim()
         );
     }
-    Ok(body.to_string())
+    // JSON-RPC returns HTTP 200 even for method errors, so surface those too.
+    if response_body.contains("\"error\"") {
+        bail!("devnet rpc returned an error: {response_body}");
+    }
+    Ok(response_body.to_string())
 }
 
 /// Validate a Starknet address: `0x` + 1..=64 hex chars (felts are ≤ 252 bits).
@@ -354,13 +357,6 @@ mod tests {
     }
 
     #[test]
-    fn devnet_endpoint_strips_the_rpc_path() {
-        let (host, port) = devnet_endpoint(&starknet_chain()).unwrap();
-        assert_eq!(host, "127.0.0.1");
-        assert_eq!(port, 5050);
-    }
-
-    #[test]
     fn find_token_is_case_insensitive_and_reports_unknowns() {
         let chain = starknet_chain();
         assert_eq!(find_token(&chain, "usdc").unwrap().symbol, "USDC");
@@ -372,16 +368,16 @@ mod tests {
     // ---- docker-backed end-to-end run against a live starknet-devnet ----
     //
     // Boots a real chain and funds a fresh (non-dev) address, then reads the
-    // balances straight off the node: ETH/STRK through devnet's balance endpoint
-    // (minted via the /mint cheat) and the four Cairo test tokens through
+    // balances straight off the node: ETH/STRK through the `devnet_getAccountBalance`
+    // cheat (minted via `devnet_mint`) and the four Cairo test tokens through
     // `balance_of` (minted via signed invokes). This is the proof the whole
-    // signed-invoke path works against the pinned RPC-0.8.1 devnet. Self-skips
-    // without Docker.
+    // signed-invoke path works against the RPC-0.10 devnet. Self-skips without
+    // Docker.
 
     use crate::runtime::manifest::Manifest;
     use crate::runtime::orchestrator::manifest_path;
     use crate::testkit::{Localnet, docker_available};
-    use starknet::core::types::FunctionCall;
+    use starknet_rust::core::types::FunctionCall;
 
     /// A dedicated port, away from the other e2e ports, for parallel runs.
     const SN_FAUCET_PORT: u16 = 5152;
@@ -389,28 +385,32 @@ mod tests {
     const RECIPIENT: &str = "0x00000000000000000000000000000000000000000000000000000000feed1234";
     const ONE_E18: u128 = 1_000_000_000_000_000_000;
 
-    /// Minimal HTTP GET → response body.
-    fn http_get_body(port: u16, path: &str) -> String {
+    /// Minimal JSON-RPC POST to devnet's `/rpc` → response body.
+    fn rpc_post(port: u16, body: &str) -> String {
         let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        let req = format!(
+            "POST /rpc HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
         stream.write_all(req.as_bytes()).unwrap();
         let mut resp = String::new();
         let _ = stream.read_to_string(&mut resp);
         resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string()
     }
 
-    /// devnet fee-token balance (ETH/STRK) via its `/account_balance` endpoint.
+    /// devnet fee-token balance (ETH/STRK) via the `devnet_getAccountBalance` cheat.
     fn native_balance(port: u16, address: &str, unit: &str) -> u128 {
-        let body = http_get_body(
-            port,
-            &format!("/account_balance?address={address}&unit={unit}"),
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"devnet_getAccountBalance","params":{{"address":"{address}","unit":"{unit}"}}}}"#
         );
+        let resp = rpc_post(port, &body);
         let v: serde_json::Value =
-            serde_json::from_str(&body).unwrap_or_else(|e| panic!("parsing '{body}': {e}"));
-        v["amount"].as_str().unwrap().parse().unwrap()
+            serde_json::from_str(&resp).unwrap_or_else(|e| panic!("parsing '{resp}': {e}"));
+        v["result"]["amount"].as_str().unwrap().parse().unwrap()
     }
 
     /// ERC-20 `balance_of(holder)` on `token`, read via `starknet_call`.
