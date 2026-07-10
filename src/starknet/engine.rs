@@ -48,6 +48,7 @@ pub struct StarknetEngine {
     name: String,
     image: String,
     host_port: u16,
+    ui: bool,
 }
 
 impl StarknetEngine {
@@ -56,7 +57,26 @@ impl StarknetEngine {
             name: name.to_string(),
             image: DEVNET_IMAGE.to_string(),
             host_port,
+            ui: false,
         }
+    }
+
+    /// Enable devnet's embedded web UI explorer (`--ui`), served at `/ui` on the
+    /// chain's own RPC port. On by default under `up`; disabled by `up --bare`.
+    /// Unlike the EVM chains — which pair with a separate Otterscan container —
+    /// devnet serves its explorer in-process, so there's no extra service or
+    /// host port to publish, and [`explorer_target`](Engine::explorer_target)
+    /// stays `None` (Otterscan speaks the EVM-only `ots_*` API).
+    pub fn ui(mut self, enabled: bool) -> Self {
+        self.ui = enabled;
+        self
+    }
+
+    /// URL of devnet's embedded web UI explorer for this chain, when enabled.
+    /// The browser reaches it on the chain's published host port at `/ui`.
+    fn explorer_url(&self) -> Option<String> {
+        self.ui
+            .then(|| format!("http://127.0.0.1:{}/ui", self.host_port))
     }
 
     /// Path (relative to the state dir) of this chain's persistent session
@@ -189,6 +209,9 @@ impl Engine for StarknetEngine {
             StateMode::Persistent => ("block", self.session_rel_path()),
         };
         let state_args = format!(r#", "--dump-on", "{dump_on}", "--dump-path", "/{dump_path}""#);
+        // devnet serves the explorer in-process, so enabling it is a single flag
+        // on the chain's own command — no companion container like the EVM chains.
+        let ui_args = if self.ui { r#", "--ui""# } else { "" };
         STARKNET_SERVICE_TEMPLATE
             .replace("{{NAME}}", &self.name)
             .replace("{{IMAGE}}", &self.image)
@@ -197,6 +220,7 @@ impl Engine for StarknetEngine {
             .replace("{{SEED}}", &DEVNET_SEED.to_string())
             .replace("{{ACCOUNTS}}", &DEVNET_ACCOUNTS.to_string())
             .replace("{{STATE_ARGS}}", &state_args)
+            .replace("{{UI_ARGS}}", ui_args)
     }
 
     fn manifest_entry(&self) -> ChainEntry {
@@ -210,7 +234,8 @@ impl Engine for StarknetEngine {
             tokens: Self::tokens(),
             contracts: Self::contracts(),
             fork: None,
-            explorer: None,
+            // devnet's own web UI, when `--ui` is on; no separate explorer service.
+            explorer: self.explorer_url(),
         }
     }
 
@@ -296,6 +321,32 @@ mod tests {
             !yaml.contains("starknet-tokens.json"),
             "persistent uses the session file, not the shared baked replay"
         );
+    }
+
+    #[test]
+    fn ui_enabled_adds_the_flag_and_advertises_the_in_process_explorer() {
+        let e = StarknetEngine::devnet("starknet-1", 5050).ui(true);
+        // The flag rides on devnet's own command (both state modes).
+        for mode in [StateMode::Ephemeral, StateMode::Persistent] {
+            assert!(e.compose_service(mode).contains("\"--ui\""));
+        }
+        // The manifest points at devnet's `/ui` on the chain's own host port —
+        // no separate explorer service or port, unlike the EVM chains.
+        assert_eq!(
+            e.manifest_entry().explorer.as_deref(),
+            Some("http://127.0.0.1:5050/ui")
+        );
+        // And it's an in-process explorer, so no Otterscan pairing is requested.
+        assert!(e.explorer_target().is_none());
+    }
+
+    #[test]
+    fn ui_disabled_by_default_omits_the_flag_and_the_explorer() {
+        let e = StarknetEngine::devnet("starknet-1", 5050);
+        // Check the quoted command token, not a bare substring — the template
+        // comment mentions `--ui` even when the flag itself is absent.
+        assert!(!e.compose_service(StateMode::Ephemeral).contains("\"--ui\""));
+        assert!(e.manifest_entry().explorer.is_none());
     }
 
     #[test]
@@ -477,5 +528,35 @@ mod tests {
                 token.address
             );
         }
+    }
+
+    /// A dedicated high port for the web-UI e2e, distinct from the other Starknet
+    /// e2e ports so it can run in parallel.
+    const SN_UI_E2E_PORT: u16 = 5154;
+
+    #[test]
+    fn starknet_devnet_serves_the_embedded_web_ui() {
+        if !docker_available() {
+            eprintln!("skipping starknet ui e2e: docker unavailable");
+            return;
+        }
+        let net = Localnet::boot_starknet_ui("t-starknet-ui", SN_UI_E2E_PORT);
+
+        // With `--ui` on, devnet serves its explorer in-process at /ui on the
+        // chain's own RPC port — no companion container, no extra published port.
+        let (status, body) = http_get(SN_UI_E2E_PORT, "/ui");
+        assert_eq!(status, 200, "GET /ui should serve the embedded explorer");
+        assert!(
+            body.to_lowercase().contains("<!doctype html"),
+            "GET /ui should return the explorer page, got: {}",
+            &body[..body.len().min(200)]
+        );
+
+        // ...and the manifest advertises exactly that URL, so tooling can find it.
+        let manifest = Manifest::read(&manifest_path(net.base())).unwrap();
+        assert_eq!(
+            manifest.chains[0].explorer.as_deref(),
+            Some(format!("http://127.0.0.1:{SN_UI_E2E_PORT}/ui").as_str())
+        );
     }
 }

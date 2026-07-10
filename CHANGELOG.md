@@ -30,6 +30,12 @@ under _Unreleased_ and the CLI surface may still change.
   once from the baked tokens and then dumped on every block (devnet mines one per
   transaction), so balances, mints, and deployments survive `down` → `up --resume`
   and are wiped by `up --reset` — matching the EVM chains.
+- **Starknet block explorer (on by default, `up --bare` to skip)** — Starknet
+  chains now boot with starknet-devnet's built-in web UI explorer (`--ui`),
+  served in-process at `/ui` on the chain's own RPC port and listed in the
+  manifest and by `status`. Unlike the EVM chains' Otterscan (a separate
+  container per chain, EVM-only), devnet serves its explorer itself, so there's
+  no extra container or published port — every `up` is browsable for both stacks.
 - **Mainnet forking** — point a chain at a live RPC with `fork_url` (and optional
   `fork_block`) in `wharfnet.toml` and it boots as a fork of that network via
   Anvil's `--fork-url`, so you can test against real balances, contracts, and
@@ -81,7 +87,6 @@ under _Unreleased_ and the CLI surface may still change.
 ### Notes
 
 - `deploy` is scaffolded but not yet implemented.
-- EVM and Starknet chains are supported; Solana is planned. A bundled explorer
-  for Starknet chains is still to come (Otterscan is EVM-only).
+- EVM and Starknet chains are supported; Solana is planned.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

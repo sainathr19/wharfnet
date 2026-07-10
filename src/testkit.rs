@@ -64,9 +64,27 @@ impl Localnet {
         )
     }
 
+    /// Like [`boot_starknet`](Self::boot_starknet) but with the explorer on, so
+    /// devnet serves its embedded web UI. Cheap to enable — it's a `--ui` flag on
+    /// the same devnet image, not a separate explorer container to pull.
+    pub(crate) fn boot_starknet_ui(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config_explorer(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\n"),
+            true,
+        )
+    }
+
     /// Write `config_body` as the single-chain `wharfnet.toml` and boot it fresh,
     /// with no explorer, in an isolated temp dir + compose project.
     fn boot_with_config(chain: &str, config_body: &str) -> Localnet {
+        Self::boot_with_config_explorer(chain, config_body, false)
+    }
+
+    /// As [`boot_with_config`](Self::boot_with_config), but `explorer` selects
+    /// whether the bundled explorer is booted. EVM chains skip it to avoid the
+    /// Otterscan image pull; Starknet's is in-process, so it's cheap to enable.
+    fn boot_with_config_explorer(chain: &str, config_body: &str, explorer: bool) -> Localnet {
         let dir = tempfile::TempDir::new_in(".").expect("create temp dir under crate root");
         let config = dir.path().join("wharfnet.toml");
         fs::write(&config, config_body).expect("write test config");
@@ -81,7 +99,7 @@ impl Localnet {
             net.base(),
             &net.project,
             UpMode::Fresh,
-            false, // no explorer — keep the boot to just the chain (no image pull)
+            explorer,
             Some(&config),
         )
         .expect("localnet should boot");

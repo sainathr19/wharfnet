@@ -5,8 +5,8 @@
 > ⚠️ Early WIP. The EVM stack — chains, test tokens, faucet, explorer, and
 > persistence — works today. A Starknet chain now **boots by default** alongside
 > the EVM ones (predeployed accounts, ETH/STRK fee tokens, baked Cairo test
-> tokens), the **faucet funds it**, and its state **persists across
-> `up --resume`** too; a bundled explorer and Solana are next.
+> tokens), the **faucet funds it**, its state **persists across `up --resume`**,
+> and it ships with a **built-in block explorer** too; Solana is next.
 
 `wharfnet` is the local harbor for your chains: boot EVM, Solana, and Starknet
 networks locally with a single command, fund accounts from a unified faucet,
@@ -47,6 +47,8 @@ Early WIP, but the **EVM stack works end to end today**. See the
       and mints the Cairo test tokens via signed invokes
 - [x] Starknet persistence — `up --resume` / `up --reset` keep (or discard) a
       Starknet chain's state across restarts, like the EVM chains
+- [x] Starknet block explorer — starknet-devnet's built-in web UI (`--ui`),
+      on by default, served in-process at `/ui`
 
 **Planned**
 
@@ -238,14 +240,20 @@ wharfnet up --bare   # chains only
 ```
 
 Anvil implements Otterscan's RPC API (`ots_*`), so the explorer needs no indexer
-or database — it's a static frontend talking straight to the chain. Each chain
-gets its own explorer on a dedicated port, and the URL is recorded in the
-manifest and printed by `status`:
+or database — it's a static frontend talking straight to the chain. Each EVM
+chain gets its own Otterscan on a dedicated port. **Starknet** chains use
+starknet-devnet's own built-in web UI instead (Otterscan is EVM-only): it's
+served in-process at `/ui` on the chain's own RPC port, so there's no extra
+container or port. Every explorer URL is recorded in the manifest and printed by
+`status`:
 
-| Chain   | RPC                     | Explorer                |
-| ------- | ----------------------- | ----------------------- |
-| anvil-1 | `http://127.0.0.1:8545` | `http://127.0.0.1:5100` |
-| anvil-2 | `http://127.0.0.1:8546` | `http://127.0.0.1:5101` |
+| Chain      | RPC                         | Explorer                    |
+| ---------- | --------------------------- | --------------------------- |
+| anvil-1    | `http://127.0.0.1:8545`     | `http://127.0.0.1:5100`     |
+| anvil-2    | `http://127.0.0.1:8546`     | `http://127.0.0.1:5101`     |
+| starknet-1 | `http://127.0.0.1:5050/rpc` | `http://127.0.0.1:5050/ui`  |
+
+`--bare` skips both the Otterscan containers and devnet's `--ui`.
 
 ## EVM chain control
 
@@ -334,8 +342,9 @@ are whole units, scaled by each token's decimals. Funding is additive, so repeat
 top-ups accumulate.
 
 Starknet chains persist across `up --resume`/`--reset` just like the EVM ones —
-see [State & persistence](#state--persistence) below. Still landing (see the
-roadmap): there's no bundled explorer for them yet (Otterscan is EVM-only).
+see [State & persistence](#state--persistence) below. They're browsable too:
+each boots with starknet-devnet's built-in web UI explorer at `/ui` on its RPC
+port (see [Block explorer](#block-explorer)).
 
 ## State & persistence
 

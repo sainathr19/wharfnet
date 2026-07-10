@@ -68,11 +68,20 @@ pub(crate) fn manifest_path(base: &Path) -> PathBuf {
 /// `config::validate` has already guaranteed the kind is supported and that an
 /// EVM chain carries a numeric `chain_id`, so the parsing here can't realistically
 /// fail; it's an internal invariant, not user-facing validation.
-fn engines_for(config: &Config) -> Vec<Box<dyn Engine>> {
-    config.chains.iter().map(engine_for).collect()
+///
+/// `explorer` mirrors the caller's explorer preference (`up` on, `up --bare`
+/// off). EVM chains pair with a separate Otterscan container built later, but a
+/// Starknet chain serves its explorer in-process, so the flag is baked into the
+/// engine here to reach its `--ui` compose arg.
+fn engines_for(config: &Config, explorer: bool) -> Vec<Box<dyn Engine>> {
+    config
+        .chains
+        .iter()
+        .map(|c| engine_for(c, explorer))
+        .collect()
 }
 
-fn engine_for(c: &config::ChainConfig) -> Box<dyn Engine> {
+fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
     match c.kind.as_str() {
         "evm" => {
             let chain_id = c
@@ -87,7 +96,7 @@ fn engine_for(c: &config::ChainConfig) -> Box<dyn Engine> {
             }
             Box::new(engine)
         }
-        "starknet" => Box::new(StarknetEngine::devnet(&c.name, c.port)),
+        "starknet" => Box::new(StarknetEngine::devnet(&c.name, c.port).ui(explorer)),
         other => unreachable!("validate() rejects unsupported kind '{other}'"),
     }
 }
@@ -228,7 +237,7 @@ fn is_session_file(name: &str) -> bool {
 /// Print the generated compose file to stdout without booting anything.
 /// Useful for inspecting or debugging what wharfnet will run.
 pub fn print_compose(explorer: bool, config_path: Option<&Path>) -> Result<()> {
-    let engines = engines_for(&config::load(config_path)?);
+    let engines = engines_for(&config::load(config_path)?, explorer);
     let explorers = if explorer {
         explorer_services(&engines)
     } else {
@@ -267,7 +276,7 @@ pub(crate) fn up_in(
     config_path: Option<&Path>,
 ) -> Result<()> {
     docker::ensure_available()?;
-    let engines = engines_for(&config::load(config_path)?);
+    let engines = engines_for(&config::load(config_path)?, explorer);
     let state_mode = mode.state_mode();
     let explorers = if explorer {
         explorer_services(&engines)
@@ -505,9 +514,11 @@ mod tests {
     use std::net::TcpListener;
     use tempfile::tempdir;
 
-    /// The default engine set (two Anvil chains + one Starknet chain).
+    /// The default engine set (two Anvil chains + one Starknet chain), with
+    /// explorers off — the generic checks don't care about the `--ui` flag; the
+    /// tests that do build their own engine set with it enabled.
     fn engines() -> Vec<Box<dyn Engine>> {
-        engines_for(&Config::default())
+        engines_for(&Config::default(), false)
     }
 
     #[test]
@@ -556,6 +567,33 @@ mod tests {
             svcs[1]
                 .config_json
                 .contains("\"erigonURL\": \"http://127.0.0.1:8546\"")
+        );
+    }
+
+    #[test]
+    fn explorer_flag_enables_the_starknet_web_ui_and_bare_disables_it() {
+        // With the explorer on, the Starknet chain serves devnet's in-process web
+        // UI via `--ui` (no companion Otterscan container — that's EVM-only).
+        let out = render_compose(
+            &engines_for(&Config::default(), true),
+            StateMode::Ephemeral,
+            &[],
+        );
+        assert!(
+            out.contains("\"--ui\""),
+            "explorer on → starknet devnet serves its web UI: {out}"
+        );
+
+        // `up --bare` (explorer off) drops the flag. Match the quoted command
+        // token, not a bare substring — the template comment mentions `--ui`.
+        let bare = render_compose(
+            &engines_for(&Config::default(), false),
+            StateMode::Ephemeral,
+            &[],
+        );
+        assert!(
+            !bare.contains("\"--ui\""),
+            "bare must not serve the web UI: {bare}"
         );
     }
 
