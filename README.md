@@ -3,9 +3,9 @@
 **One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.**
 
 > ⚠️ Early WIP. The EVM stack — chains, test tokens, faucet, explorer, and
-> persistence — works today. Starknet chains now **boot** alongside EVM ones
-> (predeployed accounts + ETH/STRK fee tokens); their faucet and persistence are
-> next, then Solana.
+> persistence — works today. A Starknet chain now **boots by default** alongside
+> the EVM ones (predeployed accounts + ETH/STRK fee tokens); its faucet and
+> persistence are next, then Solana.
 
 `wharfnet` is the local harbor for your chains: boot EVM, Solana, and Starknet
 networks locally with a single command, fund accounts from a unified faucet,
@@ -106,8 +106,10 @@ wharfnet down
 
 ## Configuration
 
-wharfnet runs zero-config — two Anvil chains by default. To customise the chain
-topology, drop a `wharfnet.toml` in your project root:
+wharfnet runs zero-config — two Anvil chains and a Starknet chain by default
+(`anvil-1` :8545, `anvil-2` :8546, `starknet-1` :5050). To customise the chain
+topology — including dropping the Starknet chain — write your own `wharfnet.toml`
+in your project root (a config replaces the defaults entirely):
 
 ```toml
 # wharfnet.toml — omit entirely for the built-in defaults
@@ -259,9 +261,11 @@ get their own namespaces (`wharfnet starknet …`, `wharfnet solana …`).
 
 ## Starknet chains
 
-Add a `kind = "starknet"` chain to `wharfnet.toml` and `wharfnet up` boots a
-[`starknet-devnet`](https://github.com/0xSpaceShard/starknet-devnet) instance
-next to your EVM chains — one command, one manifest, one `status`:
+`wharfnet up` boots a
+[`starknet-devnet`](https://github.com/0xSpaceShard/starknet-devnet) chain by
+default (`starknet-1` on :5050), right next to the two EVM chains — one command,
+one manifest, one `status`. To run without it, write a `wharfnet.toml` that omits
+the Starknet chain (a config replaces the defaults). Poke it directly:
 
 ```sh
 wharfnet up --bare

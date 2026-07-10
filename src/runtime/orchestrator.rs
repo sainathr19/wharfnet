@@ -505,7 +505,7 @@ mod tests {
     use std::net::TcpListener;
     use tempfile::tempdir;
 
-    /// The default engine set (two Anvil chains), for tests that predate config.
+    /// The default engine set (two Anvil chains + one Starknet chain).
     fn engines() -> Vec<Box<dyn Engine>> {
         engines_for(&Config::default())
     }
@@ -517,6 +517,7 @@ mod tests {
         assert!(out.contains("services:"));
         assert!(out.contains("anvil-1:"));
         assert!(out.contains("anvil-2:"));
+        assert!(out.contains("starknet-1:"));
     }
 
     #[test]
@@ -592,9 +593,10 @@ mod tests {
     #[test]
     fn engines_returns_default_set() {
         let engines = engines();
-        assert_eq!(engines.len(), 2);
+        assert_eq!(engines.len(), 3);
         assert_eq!(engines[0].name(), "anvil-1");
         assert_eq!(engines[1].name(), "anvil-2");
+        assert_eq!(engines[2].name(), "starknet-1");
     }
 
     #[test]
@@ -605,10 +607,13 @@ mod tests {
             .iter()
             .map(|e| e.manifest_entry().chain_id)
             .collect();
-        assert_eq!(ports, vec![8545, 8546]);
-        assert_eq!(chain_ids, vec!["31337", "31338"]);
+        assert_eq!(ports, vec![8545, 8546, 5050]);
+        assert_eq!(chain_ids, vec!["31337", "31338", "0x534e5f5345504f4c4941"]);
         // No two chains may share a host port or the compose file won't bind.
-        assert_ne!(ports[0], ports[1]);
+        assert_eq!(
+            ports.iter().collect::<std::collections::HashSet<_>>().len(),
+            3
+        );
     }
 
     #[test]

@@ -119,6 +119,16 @@ impl Default for Config {
                     fork_url: None,
                     fork_block: None,
                 },
+                ChainConfig {
+                    name: "starknet-1".to_string(),
+                    kind: "starknet".to_string(),
+                    port: 5050,
+                    // Starknet uses devnet's default chain id (SN_SEPOLIA).
+                    chain_id: None,
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
             ],
         }
     }
@@ -269,19 +279,24 @@ mod tests {
     }
 
     #[test]
-    fn default_is_two_anvil_chains() {
+    fn default_is_two_anvil_chains_and_a_starknet_chain() {
         let c = Config::default();
-        assert_eq!(c.chains.len(), 2);
+        assert_eq!(c.chains.len(), 3);
         assert_eq!(c.chains[0].name, "anvil-1");
         assert_eq!(c.chains[0].port, 8545);
         assert_eq!(c.chains[1].chain_id.as_deref(), Some("31338"));
+        // The Starknet chain is on by default; it carries no chain_id.
+        assert_eq!(c.chains[2].name, "starknet-1");
+        assert_eq!(c.chains[2].kind, "starknet");
+        assert_eq!(c.chains[2].port, 5050);
+        assert!(c.chains[2].chain_id.is_none());
     }
 
     #[test]
     fn missing_file_yields_defaults() {
         let dir = tempdir().unwrap();
         let c = load_from(&dir.path().join(CONFIG_FILE)).unwrap();
-        assert_eq!(c.chains.len(), 2);
+        assert_eq!(c.chains.len(), 3);
     }
 
     #[test]
