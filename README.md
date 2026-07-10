@@ -5,7 +5,8 @@
 > ⚠️ Early WIP. The EVM stack — chains, test tokens, faucet, explorer, and
 > persistence — works today. A Starknet chain now **boots by default** alongside
 > the EVM ones (predeployed accounts, ETH/STRK fee tokens, baked Cairo test
-> tokens) and the **faucet funds it too**; persistence is next, then Solana.
+> tokens), the **faucet funds it**, and its state **persists across
+> `up --resume`** too; a bundled explorer and Solana are next.
 
 `wharfnet` is the local harbor for your chains: boot EVM, Solana, and Starknet
 networks locally with a single command, fund accounts from a unified faucet,
@@ -44,11 +45,12 @@ Early WIP, but the **EVM stack works end to end today**. See the
       `status`/manifest
 - [x] Starknet faucet — same `faucet` command funds ETH/STRK (devnet mint cheat)
       and mints the Cairo test tokens via signed invokes
+- [x] Starknet persistence — `up --resume` / `up --reset` keep (or discard) a
+      Starknet chain's state across restarts, like the EVM chains
 
 **Planned**
 
 - [ ] Solana chain — validator, faucet, SPL tokens
-- [ ] Starknet persistence — `up --resume` / `up --reset` for Starknet chains
 - [ ] Starknet chain control — `wharfnet starknet …` (mine, time-travel, …)
 - [ ] `deploy` command — deploy bundled/custom contracts on demand
 - [ ] CI polish — machine-readable `status --json`, non-interactive mode
@@ -327,9 +329,9 @@ predeployed dev account (it only pays gas — the recipient needs no key). Amoun
 are whole units, scaled by each token's decimals. Funding is additive, so repeat
 top-ups accumulate.
 
-Still landing (see the roadmap): `up --resume`/`--reset` persistence doesn't cover
-Starknet chains yet, and there's no bundled explorer for them (Otterscan is
-EVM-only).
+Starknet chains persist across `up --resume`/`--reset` just like the EVM ones —
+see [State & persistence](#state--persistence) below. Still landing (see the
+roadmap): there's no bundled explorer for them yet (Otterscan is EVM-only).
 
 ## State & persistence
 
@@ -346,9 +348,11 @@ When you'd rather pick up where you left off:
 | `wharfnet up --resume` | Restore the previous session if one exists (else fresh), and **keep saving** — balances, txs, and deployments survive `down` → `up --resume`. |
 | `wharfnet up --reset` | Discard any saved session, then boot fresh. |
 
-Under the hood each chain dumps its state to a per-chain snapshot
-(`.wharfnet/state/session-<chain>.json`) via Anvil's `--state`, flushed on exit
-and periodically while running. `--resume` and `--reset` are mutually exclusive.
+Under the hood each chain continuously dumps its state to a per-chain snapshot
+(`.wharfnet/state/session-<chain>.json`) that it reloads on the next `--resume`:
+EVM chains use Anvil's `--state`, and Starknet chains dump the devnet replay log
+on every block (one per transaction). `--resume` and `--reset` are mutually
+exclusive.
 
 ## License
 

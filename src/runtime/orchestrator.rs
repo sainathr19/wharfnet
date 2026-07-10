@@ -530,6 +530,8 @@ mod tests {
         assert!(persistent.contains("session-anvil-1.json"));
         assert!(persistent.contains("session-anvil-2.json"));
         assert!(persistent.contains("--state-interval"));
+        // The Starknet chain persists too, via its own session replay.
+        assert!(persistent.contains("session-starknet-1.json"));
     }
 
     #[test]
@@ -639,6 +641,11 @@ mod tests {
             fs::read_to_string(&session)
                 .unwrap()
                 .contains("5fbdb2315678afecb367f032d93f642f64180aa3")
+        );
+        // The Starknet chain seeds its session replay from the baked tokens too.
+        assert!(
+            dir.path().join("state/session-starknet-1.json").exists(),
+            "starknet session should be seeded on first boot"
         );
 
         // Simulate accumulated runtime state, then re-stage: it must be preserved.

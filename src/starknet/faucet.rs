@@ -497,4 +497,75 @@ mod tests {
         assert_eq!(erc20_balance(&rpc, &addr("USDC"), RECIPIENT), 10_000_000); // 8 + 2 @ 6dp
         assert_eq!(erc20_balance(&rpc, &addr("WBTC"), RECIPIENT), 700_000_000); // 7 @ 8dp
     }
+
+    /// A dedicated port for the persistence cycle, away from the other e2e ports.
+    const SN_PERSIST_PORT: u16 = 5153;
+
+    /// End-to-end persistence: a faucet mint survives `down` → `up --resume`
+    /// (devnet re-executes the accumulated session replay), and `up --reset`
+    /// discards it. This is the proof `--resume`/`--reset` work on Starknet.
+    /// Runs several boot cycles, so it's the heaviest test; self-skips w/o Docker.
+    #[test]
+    fn faucet_mints_survive_down_and_up_resume() {
+        if !docker_available() {
+            eprintln!("skipping starknet persistence e2e: docker unavailable");
+            return;
+        }
+        use crate::runtime::orchestrator::{self, UpMode};
+
+        let dir = tempfile::TempDir::new_in(".").expect("temp dir under crate root");
+        let base = dir.path();
+        let project = "wharfnet-e2e-sn-persist";
+        let chain = "sn-persist";
+        let config = base.join("wharfnet.toml");
+        std::fs::write(
+            &config,
+            format!(
+                "[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {SN_PERSIST_PORT}\n"
+            ),
+        )
+        .unwrap();
+
+        // Tear the containers down even if an assertion below panics. Declared
+        // after `dir` so it drops first — down_in still sees the compose file.
+        struct Teardown<'a>(&'a std::path::Path, &'a str);
+        impl Drop for Teardown<'_> {
+            fn drop(&mut self) {
+                let _ = crate::runtime::orchestrator::down_in(self.0, self.1);
+            }
+        }
+        let _guard = Teardown(base, project);
+
+        let rpc = format!("http://127.0.0.1:{SN_PERSIST_PORT}/rpc");
+        let usdc = "0x040b582f9ba878be8e78a6ddc665dfdfd55a4deae9ceeb40115abcfa1f8df686";
+
+        // 1) First `up --resume`: seeds the per-chain session from the baked
+        //    tokens, then mint USDC — the invoke lands in the session replay.
+        orchestrator::up_in(base, project, UpMode::Resume, false, Some(&config))
+            .expect("first up --resume should boot");
+        crate::faucet::run_in(base, project, chain, RECIPIENT, 7, Some("USDC"))
+            .expect("minting USDC should succeed");
+        assert_eq!(erc20_balance(&rpc, usdc, RECIPIENT), 7_000_000);
+
+        // 2) Tear down (the bind-mounted session replay survives on the host) and
+        //    resume: devnet re-executes the replay, restoring the mint.
+        orchestrator::down_in(base, project).expect("down should succeed");
+        orchestrator::up_in(base, project, UpMode::Resume, false, Some(&config))
+            .expect("second up --resume should boot");
+        assert_eq!(
+            erc20_balance(&rpc, usdc, RECIPIENT),
+            7_000_000,
+            "the USDC mint must survive down → up --resume"
+        );
+
+        // 3) `up --reset` discards the session and boots fresh — the mint is gone.
+        orchestrator::down_in(base, project).expect("down before reset should succeed");
+        orchestrator::up_in(base, project, UpMode::Reset, false, Some(&config))
+            .expect("up --reset should boot");
+        assert_eq!(
+            erc20_balance(&rpc, usdc, RECIPIENT),
+            0,
+            "up --reset must discard the persisted mint"
+        );
+    }
 }

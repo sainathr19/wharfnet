@@ -23,6 +23,11 @@ under _Unreleased_ and the CLI surface may still change.
   the Cairo test tokens through a signed invoke of their public `mint` (submitted
   by a predeployed dev account, so the recipient needs no key). Amounts are whole
   units scaled by decimals; funding is additive.
+- **Starknet persistence** — `up --resume` / `up --reset` now cover Starknet
+  chains too. Each persists to its own `session-<chain>.json` replay log, seeded
+  once from the baked tokens and then dumped on every block (devnet mines one per
+  transaction), so balances, mints, and deployments survive `down` → `up --resume`
+  and are wiped by `up --reset` — matching the EVM chains.
 - **Mainnet forking** — point a chain at a live RPC with `fork_url` (and optional
   `fork_block`) in `wharfnet.toml` and it boots as a fork of that network via
   Anvil's `--fork-url`, so you can test against real balances, contracts, and
@@ -74,7 +79,7 @@ under _Unreleased_ and the CLI surface may still change.
 ### Notes
 
 - `deploy` is scaffolded but not yet implemented.
-- EVM and Starknet chains are supported; Solana is planned. Starknet persistence
-  (`up --resume`/`--reset`) and a bundled explorer are still to come.
+- EVM and Starknet chains are supported; Solana is planned. A bundled explorer
+  for Starknet chains is still to come (Otterscan is EVM-only).
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

@@ -58,6 +58,14 @@ impl StarknetEngine {
         }
     }
 
+    /// Path (relative to the state dir) of this chain's persistent session
+    /// replay. Per-chain, and named `session-…` so the orchestrator's reset and
+    /// resume detection — which key off that prefix — treat it like any other
+    /// saved session, no Starknet-specific handling required.
+    fn session_rel_path(&self) -> String {
+        format!("state/session-{}.json", self.name)
+    }
+
     /// The deterministic predeployed accounts for `--seed 0`, captured from the
     /// pinned image. Addresses are the 0x + 64-hex canonical form; the docker
     /// e2e test asserts these still match devnet's `/predeployed_accounts`.
@@ -163,14 +171,23 @@ impl Engine for StarknetEngine {
         self.host_port
     }
 
-    fn compose_service(&self, _mode: StateMode) -> String {
-        // Point devnet at the baked token replay so it re-executes the token
-        // declares/deploys/mints on boot. `--dump-on request` is required for the
-        // load to fully replay (verified); wharfnet never POSTs /dump, so the
-        // mounted file is only ever read, and it's re-staged fresh each boot.
-        // Session persistence (up --resume) layers onto this in a later step.
-        let state_args =
-            format!(r#", "--dump-on", "request", "--dump-path", "/{TOKEN_STATE_REL_PATH}""#);
+    fn compose_service(&self, mode: StateMode) -> String {
+        // devnet's dump/load is a single `--dump-path` slot; whatever file it
+        // points at is re-executed on boot. The `--dump-on` trigger decides
+        // whether runtime changes are written back:
+        //   * Ephemeral → `request`, which loads the baked replay but never writes
+        //     it back (verified), so the chain stays disposable — and the file is
+        //     re-staged fresh each boot anyway.
+        //   * Persistent → `block`, which dumps after every block. Because devnet
+        //     mines a block per transaction (its default), that continuously saves
+        //     each tx to the per-chain session replay — the Starknet analogue of
+        //     Anvil's `--state` — so work survives `docker stop` and `up --resume`
+        //     with no explicit dump on teardown.
+        let (dump_on, dump_path) = match mode {
+            StateMode::Ephemeral => ("request", TOKEN_STATE_REL_PATH.to_string()),
+            StateMode::Persistent => ("block", self.session_rel_path()),
+        };
+        let state_args = format!(r#", "--dump-on", "{dump_on}", "--dump-path", "/{dump_path}""#);
         STARKNET_SERVICE_TEMPLATE
             .replace("{{NAME}}", &self.name)
             .replace("{{IMAGE}}", &self.image)
@@ -201,14 +218,24 @@ impl Engine for StarknetEngine {
         HealthProbe::HttpGet { path: "/is_alive" }
     }
 
-    fn staged_files(&self, _mode: StateMode) -> Vec<StagedFile> {
-        // Refresh the baked token replay before every boot so devnet always starts
-        // from the known-good tokens (mirrors EvmEngine's ephemeral token staging).
-        vec![StagedFile {
-            rel_path: TOKEN_STATE_REL_PATH.to_string(),
-            contents: STARKNET_TOKEN_STATE,
-            if_absent: false,
-        }]
+    fn staged_files(&self, mode: StateMode) -> Vec<StagedFile> {
+        match mode {
+            // Refresh the baked token replay before every boot so an ephemeral
+            // chain always starts from the known-good tokens (mirrors EvmEngine).
+            StateMode::Ephemeral => vec![StagedFile {
+                rel_path: TOKEN_STATE_REL_PATH.to_string(),
+                contents: STARKNET_TOKEN_STATE,
+                if_absent: false,
+            }],
+            // Seed the session replay from the baked tokens only the first time;
+            // on later boots the existing session (the accumulated request log
+            // that reconstructs the user's work) is kept untouched.
+            StateMode::Persistent => vec![StagedFile {
+                rel_path: self.session_rel_path(),
+                contents: STARKNET_TOKEN_STATE,
+                if_absent: true,
+            }],
+        }
     }
 }
 
@@ -234,11 +261,40 @@ mod tests {
             assert!(yaml.contains("\"--accounts\", \"3\""));
             // Published host port maps to the container's 5050.
             assert!(yaml.contains("\"5055:5050\""));
-            // Boots pointed at the baked token replay so devnet redeploys them.
-            assert!(yaml.contains("\"--dump-path\", \"/state/starknet-tokens.json\""));
+            // Both modes load-and-replay via a `--dump-on`/`--dump-path` pair; the
+            // specific trigger and file differ per mode (asserted separately).
+            assert!(yaml.contains("\"--dump-on\","));
+            assert!(yaml.contains("\"--dump-path\","));
             assert!(!yaml.contains("{{"), "no placeholder should remain: {yaml}");
             assert!(!yaml.contains("}}"), "no placeholder should remain: {yaml}");
         }
+    }
+
+    #[test]
+    fn ephemeral_compose_loads_the_shared_token_replay_without_dumping() {
+        let yaml = StarknetEngine::devnet("starknet-1", 5050).compose_service(StateMode::Ephemeral);
+        // Ephemeral points the slot at the baked replay with `request`, which
+        // loads it but never writes back, so runtime state stays disposable.
+        assert!(yaml.contains("\"--dump-on\", \"request\""));
+        assert!(yaml.contains("\"--dump-path\", \"/state/starknet-tokens.json\""));
+        assert!(
+            !yaml.contains("session-"),
+            "ephemeral must not use a session"
+        );
+    }
+
+    #[test]
+    fn persistent_compose_dumps_each_block_to_a_per_chain_session() {
+        let yaml =
+            StarknetEngine::devnet("starknet-1", 5050).compose_service(StateMode::Persistent);
+        // Persistent dumps on every block (= every tx) to a per-chain session
+        // replay, so work accumulates across `down` → `up --resume`.
+        assert!(yaml.contains("\"--dump-on\", \"block\""));
+        assert!(yaml.contains("\"--dump-path\", \"/state/session-starknet-1.json\""));
+        assert!(
+            !yaml.contains("starknet-tokens.json"),
+            "persistent uses the session file, not the shared baked replay"
+        );
     }
 
     #[test]
@@ -277,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn stages_the_token_replay_and_has_no_explorer() {
+    fn ephemeral_stages_the_token_replay_and_has_no_explorer() {
         let e = StarknetEngine::devnet("starknet-1", 5050);
         let files = e.staged_files(StateMode::Ephemeral);
         assert_eq!(files.len(), 1);
@@ -286,6 +342,16 @@ mod tests {
         // The replay really declares/deploys the tokens (contains a declare tx).
         assert!(files[0].contents.contains("starknet_addDeclareTransaction"));
         assert!(e.explorer_target().is_none());
+    }
+
+    #[test]
+    fn persistent_seeds_a_per_chain_session_only_if_absent() {
+        let files = StarknetEngine::devnet("starknet-1", 5050).staged_files(StateMode::Persistent);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].rel_path, "state/session-starknet-1.json");
+        assert!(files[0].if_absent, "must never clobber a saved session");
+        // Seeded from the baked replay, so a fresh session still has the tokens.
+        assert!(files[0].contents.contains("starknet_addDeclareTransaction"));
     }
 
     // ---- docker-backed end-to-end run against a live starknet-devnet ----
