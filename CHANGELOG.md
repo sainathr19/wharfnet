@@ -42,6 +42,12 @@ under _Unreleased_ and the CLI surface may still change.
   balances locally. `${VAR}` expansion and URL redaction are shared with the EVM
   path; a forked chain mirrors live state, so it skips the baked Cairo test
   tokens. Reuses the same `wharfnet.toml` seam as the EVM `--fork-url`.
+- **Starknet chain control** — `wharfnet starknet mine`, `increase-time`, `warp`,
+  and `impersonate` wrap starknet-devnet's cheat JSON-RPC to drive a running
+  chain, mirroring `wharfnet evm …` and grouped under `starknet` so each chain
+  kind owns its own verbs. Two devnet-imposed differences: there's no
+  `snapshot`/`revert` (devnet has no numbered-snapshot mechanism), and
+  `impersonate` requires a forked chain (it's refused otherwise, with a hint).
 - **Mainnet forking** — point a chain at a live RPC with `fork_url` (and optional
   `fork_block`) in `wharfnet.toml` and it boots as a fork of that network via
   Anvil's `--fork-url`, so you can test against real balances, contracts, and

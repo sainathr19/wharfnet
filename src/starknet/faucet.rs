@@ -15,10 +15,6 @@
 //! `add_invoke_transaction` — devnet's gas is nominal, so fixed generous bounds
 //! are simpler and more robust than trusting a localnet fee estimate.
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::time::Duration;
-
 use anyhow::{Context, Result, bail};
 use starknet_rust::accounts::{Account, ExecutionEncoding, SingleOwnerAccount};
 use starknet_rust::core::types::{BlockId, BlockTag, Call, Felt};
@@ -27,6 +23,7 @@ use starknet_rust::providers::jsonrpc::HttpTransport;
 use starknet_rust::providers::{JsonRpcClient, Provider, Url};
 use starknet_rust::signers::{LocalWallet, SigningKey};
 
+use super::devnet;
 use crate::runtime::manifest::{ChainEntry, Token};
 use crate::runtime::ui;
 
@@ -108,7 +105,7 @@ fn mint_native(
         let body = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"devnet_mint","params":{{"address":"{address}","amount":{raw},"unit":"{unit}"}}}}"#
         );
-        let resp = devnet_rpc(chain, &body)?;
+        let resp = devnet::post(chain, &body)?;
         if !resp.contains("new_balance") {
             bail!("devnet_mint did not confirm the deposit: {resp}");
         }
@@ -225,49 +222,10 @@ fn scaled_amount(amount: u64, decimals: u8) -> Result<u128> {
         .context("token amount too large")
 }
 
-/// POST a JSON-RPC `body` to the chain's `/rpc` endpoint and return the response
-/// body. devnet's cheats (`devnet_mint`, …) live alongside the standard Starknet
-/// methods there, so this drives them with a minimal dependency-free socket,
-/// mirroring the readiness probe's style. Derives host/port/path from the
-/// manifest's rpc url.
-fn devnet_rpc(chain: &ChainEntry, body: &str) -> Result<String> {
-    let url = Url::parse(&chain.rpc).with_context(|| format!("invalid rpc url '{}'", chain.rpc))?;
-    let host = url.host_str().unwrap_or("127.0.0.1");
-    let port = url
-        .port_or_known_default()
-        .context("rpc url has no port to reach devnet on")?;
-    let path = url.path();
-    let mut stream = TcpStream::connect(format!("{host}:{port}"))
-        .with_context(|| format!("connecting to devnet at {host}:{port} — is the localnet up?"))?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    stream.write_all(request.as_bytes())?;
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp)?;
-    let (head, response_body) = resp
-        .split_once("\r\n\r\n")
-        .context("devnet returned a malformed HTTP response")?;
-    if !head.starts_with("HTTP/1.1 200") {
-        bail!(
-            "devnet rpc call failed: {}",
-            head.lines().next().unwrap_or("").trim()
-        );
-    }
-    // JSON-RPC returns HTTP 200 even for method errors, so surface those too.
-    if response_body.contains("\"error\"") {
-        bail!("devnet rpc returned an error: {response_body}");
-    }
-    Ok(response_body.to_string())
-}
-
 /// Validate a Starknet address: `0x` + 1..=64 hex chars (felts are ≤ 252 bits).
-/// The exact field-range check is left to `Felt::from_hex` at call time.
-fn validate_address(address: &str) -> Result<()> {
+/// The exact field-range check is left to `Felt::from_hex` at call time. Shared
+/// with [chain control](super::control), which pre-flights the same format.
+pub(crate) fn validate_address(address: &str) -> Result<()> {
     let ok = address.starts_with("0x")
         && (3..=66).contains(&address.len())
         && address[2..].chars().all(|c| c.is_ascii_hexdigit());
@@ -300,6 +258,9 @@ fn find_token<'a>(chain: &'a ChainEntry, symbol: &str) -> Result<&'a Token> {
 mod tests {
     use super::*;
     use crate::runtime::manifest::Account;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
 
     fn starknet_chain() -> ChainEntry {
         ChainEntry {

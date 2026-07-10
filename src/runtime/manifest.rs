@@ -3,7 +3,7 @@
 //! IDs, and funded accounts. This is the generalized successor to a
 //! hand-maintained `deployments.json`.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -86,6 +86,28 @@ impl Manifest {
             .with_context(|| format!("reading manifest from {}", path.display()))?;
         let manifest = serde_json::from_str(&data).context("parsing manifest")?;
         Ok(manifest)
+    }
+
+    /// Chains matching `selector` — either a chain kind (`evm`, `starknet`),
+    /// selecting every chain of that kind, or a specific chain name (`anvil-1`).
+    /// Errors, listing what is available, when nothing matches. Shared by the
+    /// faucet and the per-kind chain-control commands.
+    pub fn select(&self, selector: &str) -> Result<Vec<&ChainEntry>> {
+        let matches: Vec<&ChainEntry> = self
+            .chains
+            .iter()
+            .filter(|c| c.name == selector || c.kind == selector)
+            .collect();
+        if matches.is_empty() {
+            let available = self
+                .chains
+                .iter()
+                .map(|c| format!("{} ({})", c.name, c.kind))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("no chain matching '{selector}'. Available: {available}");
+        }
+        Ok(matches)
     }
 }
 
@@ -181,6 +203,16 @@ mod tests {
         .unwrap();
         let loaded = Manifest::read(&path).unwrap();
         assert!(loaded.chains[0].tokens.is_empty());
+    }
+
+    #[test]
+    fn select_matches_by_kind_and_name_and_errors_otherwise() {
+        let m = sample(); // one evm chain named "anvil-1"
+        assert_eq!(m.select("evm").unwrap().len(), 1);
+        assert_eq!(m.select("anvil-1").unwrap()[0].name, "anvil-1");
+        let err = m.select("nope").unwrap_err();
+        assert!(err.to_string().contains("no chain matching"), "{err}");
+        assert!(err.to_string().contains("anvil-1 (evm)"), "{err}");
     }
 
     #[test]

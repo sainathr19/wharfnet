@@ -51,11 +51,12 @@ Early WIP, but the **EVM stack works end to end today**. See the
       on by default, served in-process at `/ui`
 - [x] Starknet forking — `fork_url`/`fork_block` per chain (devnet
       `--fork-network`), mirroring a live Starknet network locally
+- [x] Starknet chain control — `wharfnet starknet mine | increase-time | warp |
+      impersonate` over devnet's cheat JSON-RPC
 
 **Planned**
 
 - [ ] Solana chain — validator, faucet, SPL tokens
-- [ ] Starknet chain control — `wharfnet starknet …` (mine, time-travel, …)
 - [ ] `deploy` command — deploy bundled/custom contracts on demand
 - [ ] CI polish — machine-readable `status --json`, non-interactive mode
 
@@ -294,6 +295,26 @@ wharfnet evm revert 0x1              # roll state back to that snapshot
 (great with forked state), and `snapshot`/`revert` give tests a cheap reset
 point. These live under `evm` because they're Anvil-specific — other chain kinds
 get their own namespaces (`wharfnet starknet …`, `wharfnet solana …`).
+
+## Starknet chain control
+
+The Starknet equivalents live under `wharfnet starknet`, wrapping starknet-devnet's
+cheat JSON-RPC. Each takes a `--chain` selector (`starknet` for every Starknet
+chain, or a name like `starknet-1`; defaults to `starknet`):
+
+```sh
+wharfnet starknet mine 10                # create 10 blocks
+wharfnet starknet increase-time 86400    # fast-forward time by a day
+wharfnet starknet warp 1893456000        # set the chain to an absolute Unix time
+wharfnet starknet impersonate 0x0123…    # forked chains only (see below)
+wharfnet starknet impersonate 0x0123… --stop
+```
+
+Two differences from the EVM verbs, both from starknet-devnet: there's **no
+`snapshot`/`revert`** (devnet has no numbered-snapshot mechanism, only block
+abort), and **`impersonate` works only on a forked chain** — devnet impersonates
+accounts that exist on the forked origin, so on a plain local chain the command
+is refused with a hint to set `fork_url` first.
 
 ## Starknet chains
 

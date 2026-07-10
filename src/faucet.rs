@@ -12,7 +12,7 @@
 use anyhow::{Result, bail};
 use std::path::Path;
 
-use crate::runtime::manifest::{ChainEntry, Manifest};
+use crate::runtime::manifest::Manifest;
 use crate::runtime::orchestrator::{DEFAULT_PROJECT, DEFAULT_STATE_DIR, manifest_path};
 
 pub fn run(chain: &str, address: &str, amount: u64, token: Option<&str>) -> Result<()> {
@@ -41,7 +41,7 @@ pub(crate) fn run_in(
         bail!("localnet is not running. Start it with `wharfnet up`.");
     }
     let manifest = Manifest::read(&manifest_file)?;
-    for chain in targets(&manifest, selector)? {
+    for chain in manifest.select(selector)? {
         match chain.kind.as_str() {
             "evm" => crate::evm::faucet::fund_chain(base, project, chain, address, amount, token)?,
             "starknet" => crate::starknet::faucet::fund_chain(chain, address, amount, token)?,
@@ -54,30 +54,10 @@ pub(crate) fn run_in(
     Ok(())
 }
 
-/// Chains matching `selector` — a kind (`evm`, `starknet`) or a specific name
-/// (`anvil-1`). Errors, listing what is available, if nothing matches.
-fn targets<'a>(manifest: &'a Manifest, selector: &str) -> Result<Vec<&'a ChainEntry>> {
-    let targets: Vec<&ChainEntry> = manifest
-        .chains
-        .iter()
-        .filter(|c| c.name == selector || c.kind == selector)
-        .collect();
-    if targets.is_empty() {
-        let available = manifest
-            .chains
-            .iter()
-            .map(|c| format!("{} ({})", c.name, c.kind))
-            .collect::<Vec<_>>()
-            .join(", ");
-        bail!("no chain matching '{selector}'. Available: {available}");
-    }
-    Ok(targets)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::manifest::{Account, Token};
+    use crate::runtime::manifest::{Account, ChainEntry, Token};
     use crate::runtime::orchestrator::manifest_path;
     use tempfile::tempdir;
 
@@ -111,11 +91,11 @@ mod tests {
     const VALID_ADDR: &str = "0x000000000000000000000000000000000000dEaD";
 
     #[test]
-    fn targets_match_by_kind_and_name_and_error_otherwise() {
+    fn selector_matches_by_kind_and_name_and_errors_otherwise() {
         let manifest = Manifest::new(vec![evm_chain()]);
-        assert_eq!(targets(&manifest, "evm").unwrap().len(), 1);
-        assert_eq!(targets(&manifest, "anvil-1").unwrap().len(), 1);
-        let err = targets(&manifest, "nope").unwrap_err();
+        assert_eq!(manifest.select("evm").unwrap().len(), 1);
+        assert_eq!(manifest.select("anvil-1").unwrap().len(), 1);
+        let err = manifest.select("nope").unwrap_err();
         assert!(err.to_string().contains("no chain matching"), "{err}");
     }
 
