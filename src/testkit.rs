@@ -45,17 +45,60 @@ impl Localnet {
     /// auto-mining so block-count assertions stay deterministic. Panics on
     /// failure (this is test-only code).
     pub(crate) fn boot(chain: &str, port: u16, chain_id: u64, block_time: u64) -> Localnet {
-        let dir = tempfile::TempDir::new_in(".").expect("create temp dir under crate root");
         // A single-chain topology on a dedicated high port keeps parallel e2e
         // tests from colliding with each other or a dev localnet on 8545/8546.
-        let config = dir.path().join("wharfnet.toml");
-        fs::write(
-            &config,
-            format!(
+        Self::boot_with_config(
+            chain,
+            &format!(
                 "[[chains]]\nname = \"{chain}\"\nport = {port}\nchain_id = {chain_id}\nblock_time = {block_time}\n"
             ),
         )
-        .expect("write test config");
+    }
+
+    /// Boot one `starknet-devnet` chain named `chain` on host `port`, isolated
+    /// under its own temp dir and compose project. Panics on failure.
+    pub(crate) fn boot_starknet(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\n"),
+        )
+    }
+
+    /// Like [`boot_starknet`](Self::boot_starknet) but with the explorer on, so
+    /// devnet serves its embedded web UI. Cheap to enable — it's a `--ui` flag on
+    /// the same devnet image, not a separate explorer container to pull.
+    pub(crate) fn boot_starknet_ui(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config_explorer(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\n"),
+            true,
+        )
+    }
+
+    /// Boot a `starknet-devnet` chain that forks a live Starknet RPC at
+    /// `fork_url`. Panics on failure.
+    pub(crate) fn boot_starknet_fork(chain: &str, port: u16, fork_url: &str) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!(
+                "[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\nfork_url = \"{fork_url}\"\n"
+            ),
+        )
+    }
+
+    /// Write `config_body` as the single-chain `wharfnet.toml` and boot it fresh,
+    /// with no explorer, in an isolated temp dir + compose project.
+    fn boot_with_config(chain: &str, config_body: &str) -> Localnet {
+        Self::boot_with_config_explorer(chain, config_body, false)
+    }
+
+    /// As [`boot_with_config`](Self::boot_with_config), but `explorer` selects
+    /// whether the bundled explorer is booted. EVM chains skip it to avoid the
+    /// Otterscan image pull; Starknet's is in-process, so it's cheap to enable.
+    fn boot_with_config_explorer(chain: &str, config_body: &str, explorer: bool) -> Localnet {
+        let dir = tempfile::TempDir::new_in(".").expect("create temp dir under crate root");
+        let config = dir.path().join("wharfnet.toml");
+        fs::write(&config, config_body).expect("write test config");
 
         let net = Localnet {
             dir,
@@ -67,7 +110,7 @@ impl Localnet {
             net.base(),
             &net.project,
             UpMode::Fresh,
-            false, // no explorer — keep the boot to just the chain (no image pull)
+            explorer,
             Some(&config),
         )
         .expect("localnet should boot");

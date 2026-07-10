@@ -1,0 +1,71 @@
+//! A minimal JSON-RPC client for a running `starknet-devnet` chain's `/rpc`
+//! endpoint. devnet's cheat methods (`devnet_mint`, `devnet_createBlock`,
+//! `devnet_increaseTime`, …) live there alongside the standard Starknet methods,
+//! so both the [faucet](super::faucet) and [control](super::control) drive them
+//! through here. A dependency-free raw socket keeps this in step with the
+//! orchestrator's readiness probe rather than pulling in an HTTP client.
+
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
+use serde_json::Value;
+use starknet_rust::providers::Url;
+
+use crate::runtime::manifest::ChainEntry;
+
+/// POST a raw JSON-RPC `body` to `chain`'s `/rpc` endpoint and return the
+/// response body text. Host, port, and path are derived from the manifest's rpc
+/// url. Bails on a transport failure, a non-200 response, or a JSON-RPC `error`.
+pub(crate) fn post(chain: &ChainEntry, body: &str) -> Result<String> {
+    let url = Url::parse(&chain.rpc).with_context(|| format!("invalid rpc url '{}'", chain.rpc))?;
+    let host = url.host_str().unwrap_or("127.0.0.1");
+    let port = url
+        .port_or_known_default()
+        .context("rpc url has no port to reach devnet on")?;
+    let path = url.path();
+    let mut stream = TcpStream::connect(format!("{host}:{port}"))
+        .with_context(|| format!("connecting to devnet at {host}:{port} — is the localnet up?"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream.write_all(request.as_bytes())?;
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp)?;
+    let (head, response_body) = resp
+        .split_once("\r\n\r\n")
+        .context("devnet returned a malformed HTTP response")?;
+    if !head.starts_with("HTTP/1.1 200") {
+        bail!(
+            "devnet rpc call failed: {}",
+            head.lines().next().unwrap_or("").trim()
+        );
+    }
+    // JSON-RPC returns HTTP 200 even for method errors, so surface those too.
+    if response_body.contains("\"error\"") {
+        bail!("devnet rpc returned an error: {response_body}");
+    }
+    Ok(response_body.to_string())
+}
+
+/// Call a JSON-RPC `method` with `params` on `chain` and return the parsed
+/// `result` value. A convenience over [`post`] for callers that need the result
+/// (e.g. reading a block number); errors are already surfaced by `post`.
+pub(crate) fn call(chain: &ChainEntry, method: &str, params: Value) -> Result<Value> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    })
+    .to_string();
+    let resp = post(chain, &body)?;
+    let parsed: Value = serde_json::from_str(&resp)
+        .with_context(|| format!("parsing {method} response: {resp}"))?;
+    Ok(parsed.get("result").cloned().unwrap_or(Value::Null))
+}

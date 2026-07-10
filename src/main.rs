@@ -1,13 +1,16 @@
 //! wharfnet — one-command localnet for EVM, Solana & Starknet.
 
 mod evm;
+mod faucet;
 mod runtime;
+mod starknet;
 #[cfg(test)]
 mod testkit;
 
 use clap::{Parser, Subcommand};
-use evm::{control, faucet};
+use evm::control;
 use runtime::orchestrator;
+use starknet::control as sn_control;
 use std::path::PathBuf;
 
 /// One-command localnet for EVM, Solana & Starknet.
@@ -56,16 +59,17 @@ enum Commands {
     },
     /// Fund an address from the built-in faucet.
     Faucet {
-        /// Target chain — a kind (e.g. `evm`) to fund every matching chain, or a
-        /// specific chain name (e.g. `anvil-1`).
+        /// Target chain — a kind (`evm`, `starknet`) to fund every matching
+        /// chain, or a specific chain name (e.g. `anvil-1`, `starknet-1`).
         chain: String,
         /// Recipient address.
         address: String,
-        /// Amount in whole units (ETH, or whole tokens scaled by their decimals).
+        /// Amount in whole units (native coin, or whole tokens scaled by their
+        /// decimals).
         #[arg(default_value_t = 100)]
         amount: u64,
-        /// Fund only this token (e.g. `USDC`). Omit to fund the native coin and
-        /// every bundled token.
+        /// Fund only this token (e.g. `USDC`). Omit to fund the native coin(s)
+        /// and every bundled token.
         #[arg(long)]
         token: Option<String>,
     },
@@ -73,6 +77,11 @@ enum Commands {
     Evm {
         #[command(subcommand)]
         command: EvmCommands,
+    },
+    /// Starknet chain controls: create blocks, advance time, impersonate.
+    Starknet {
+        #[command(subcommand)]
+        command: StarknetCommands,
     },
     /// Deploy the pre-baked test tokens and contracts.
     Deploy,
@@ -130,6 +139,49 @@ enum EvmCommands {
     },
 }
 
+/// Starknet-specific chain controls, grouped under `wharfnet starknet …`. These
+/// wrap starknet-devnet's cheat JSON-RPC methods. There is no `snapshot`/`revert`
+/// (devnet has no numbered-snapshot mechanism), and `impersonate` needs a forked
+/// chain — otherwise they mirror the `wharfnet evm` verbs.
+#[derive(Subcommand)]
+enum StarknetCommands {
+    /// Create blocks on a chain.
+    Mine {
+        /// Number of blocks to create.
+        #[arg(default_value_t = 1)]
+        count: u64,
+        /// Target chain — `starknet` for every Starknet chain, or a name like
+        /// `starknet-1`.
+        #[arg(long, default_value = "starknet")]
+        chain: String,
+    },
+    /// Fast-forward chain time by N seconds (generates a block to apply it).
+    IncreaseTime {
+        /// Seconds to advance.
+        seconds: u64,
+        #[arg(long, default_value = "starknet")]
+        chain: String,
+    },
+    /// Set the chain time to an absolute Unix timestamp (generates a block).
+    Warp {
+        /// Unix timestamp in seconds.
+        timestamp: u64,
+        #[arg(long, default_value = "starknet")]
+        chain: String,
+    },
+    /// Impersonate an account so you can send txs as it — no private key needed.
+    /// Requires a forked chain (devnet only impersonates in forking mode).
+    Impersonate {
+        /// Address to impersonate.
+        address: String,
+        /// Stop impersonating the address instead.
+        #[arg(long)]
+        stop: bool,
+        #[arg(long, default_value = "starknet")]
+        chain: String,
+    },
+}
+
 fn main() {
     if let Err(e) = run(Cli::parse().command) {
         eprintln!("error: {e:#}");
@@ -176,6 +228,18 @@ fn run(command: Commands) -> anyhow::Result<()> {
             } => control::impersonate(&chain, &address, stop),
             EvmCommands::Snapshot { chain } => control::snapshot(&chain),
             EvmCommands::Revert { id, chain } => control::revert(&chain, &id),
+        },
+        Commands::Starknet { command } => match command {
+            StarknetCommands::Mine { count, chain } => sn_control::mine(&chain, count),
+            StarknetCommands::IncreaseTime { seconds, chain } => {
+                sn_control::increase_time(&chain, seconds)
+            }
+            StarknetCommands::Warp { timestamp, chain } => sn_control::warp(&chain, timestamp),
+            StarknetCommands::Impersonate {
+                address,
+                stop,
+                chain,
+            } => sn_control::impersonate(&chain, &address, stop),
         },
         Commands::Deploy => anyhow::bail!("deploy not yet implemented"),
     }
@@ -338,6 +402,48 @@ mod tests {
 
         // the old flat forms no longer exist at root
         assert!(Cli::try_parse_from(["wharfnet", "mine"]).is_err());
+    }
+
+    #[test]
+    fn parses_starknet_control_commands() {
+        // `starknet mine`: count defaults to 1, chain defaults to starknet.
+        let cli = Cli::try_parse_from(["wharfnet", "starknet", "mine"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Starknet {
+                command: StarknetCommands::Mine { count: 1, ref chain }
+            } if chain == "starknet"
+        ));
+
+        // `starknet increase-time <secs> --chain <name>`
+        let cli = Cli::try_parse_from([
+            "wharfnet",
+            "starknet",
+            "increase-time",
+            "3600",
+            "--chain",
+            "starknet-1",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Starknet {
+                command: StarknetCommands::IncreaseTime { seconds: 3600, ref chain }
+            } if chain == "starknet-1"
+        ));
+
+        // `starknet impersonate <addr> --stop`
+        let cli = Cli::try_parse_from(["wharfnet", "starknet", "impersonate", "0x123", "--stop"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Starknet {
+                command: StarknetCommands::Impersonate { stop: true, .. }
+            }
+        ));
+
+        // There's no snapshot/revert under starknet (no devnet analogue).
+        assert!(Cli::try_parse_from(["wharfnet", "starknet", "snapshot"]).is_err());
     }
 
     #[test]

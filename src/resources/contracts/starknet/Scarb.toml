@@ -1,0 +1,17 @@
+[package]
+name = "wharfnet_tokens"
+version = "0.1.0"
+edition = "2024_07"
+
+# Self-contained Cairo ERC-20s for local testing — the Starknet analogue of the
+# Solidity tokens in ../src. No OpenZeppelin dependency (kept dependency-free, like
+# the Solidity originals), so class hashes only move when these sources or the
+# pinned Scarb toolchain change. Regenerate the baked devnet state with
+# scripts/gen-starknet-token-state.sh.
+
+[dependencies]
+starknet = ">=2.11.0"
+
+[[target.starknet-contract]]
+sierra = true
+casm = true

@@ -4,7 +4,7 @@
 //! embedded into the binary at compile time — edit those templates, not Rust
 //! strings.
 
-use crate::runtime::engine::{Engine, ExplorerTarget, StagedFile, StateMode};
+use crate::runtime::engine::{Engine, ExplorerTarget, HealthProbe, StagedFile, StateMode};
 use crate::runtime::manifest::{Account, ChainEntry, Contract, Token};
 
 /// Internal port the engine listens on inside its container.
@@ -34,23 +34,7 @@ struct Fork {
 impl Fork {
     /// A redacted description safe to record and print — the RPC key is dropped.
     fn describe(&self) -> String {
-        let source = redact_url(&self.url);
-        match self.block {
-            Some(block) => format!("{source} @ block {block}"),
-            None => format!("{source} @ latest"),
-        }
-    }
-}
-
-/// Keep only `scheme://host` from a URL, dropping the path and query so an
-/// embedded API key is never recorded or printed.
-fn redact_url(url: &str) -> String {
-    match url.split_once("://") {
-        Some((scheme, rest)) => {
-            let host = rest.split(['/', '?']).next().unwrap_or(rest);
-            format!("{scheme}://{host}")
-        }
-        None => url.split(['/', '?']).next().unwrap_or(url).to_string(),
+        crate::runtime::fork::describe(&self.url, self.block)
     }
 }
 
@@ -249,7 +233,7 @@ impl Engine for EvmEngine {
             name: self.name.clone(),
             kind: "evm".to_string(),
             rpc: format!("http://127.0.0.1:{}", self.host_port),
-            chain_id: self.chain_id,
+            chain_id: self.chain_id.to_string(),
             accounts: Self::accounts(),
             tokens: if forked { Vec::new() } else { Self::tokens() },
             contracts: if forked {
@@ -260,6 +244,13 @@ impl Engine for EvmEngine {
             fork: self.fork.as_ref().map(Fork::describe),
             // Populated by the orchestrator when an explorer is booted.
             explorer: None,
+        }
+    }
+
+    fn health_probe(&self) -> HealthProbe {
+        // Anvil answers JSON-RPC; `eth_chainId` is the cheapest readiness ping.
+        HealthProbe::JsonRpc {
+            method: "eth_chainId",
         }
     }
 
@@ -355,7 +346,7 @@ mod tests {
         let entry = EvmEngine::anvil("anvil-1", 8545, 31337).manifest_entry();
         assert_eq!(entry.kind, "evm");
         assert_eq!(entry.rpc, "http://127.0.0.1:8545");
-        assert_eq!(entry.chain_id, 31337);
+        assert_eq!(entry.chain_id, "31337");
         assert_eq!(entry.accounts.len(), 3);
         assert_eq!(
             entry.accounts[0].address,
@@ -487,15 +478,5 @@ mod tests {
         // wharfnet deploys nothing onto a fork, so it advertises no presets.
         assert!(entry.tokens.is_empty());
         assert!(entry.contracts.is_empty());
-    }
-
-    #[test]
-    fn redact_url_keeps_only_scheme_and_host() {
-        assert_eq!(
-            redact_url("https://eth-mainnet.g.alchemy.com/v2/KEY123"),
-            "https://eth-mainnet.g.alchemy.com"
-        );
-        assert_eq!(redact_url("http://localhost:8545"), "http://localhost:8545");
-        assert_eq!(redact_url("weird?q=1"), "weird");
     }
 }

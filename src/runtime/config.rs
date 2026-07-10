@@ -10,7 +10,9 @@
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use serde::de::{self, Deserializer, Visitor};
 use std::collections::HashSet;
+use std::fmt;
 use std::path::Path;
 
 /// Config file looked up in the current working directory by default.
@@ -26,6 +28,36 @@ fn default_block_time() -> u64 {
     1
 }
 
+/// Deserialize `chain_id` from either a TOML integer (`chain_id = 31337`) or a
+/// string (`chain_id = "SN_SEPOLIA"`), always storing it as a `String`. EVM
+/// users naturally write an integer; Starknet chain IDs are felts that don't fit
+/// one. Absent → `None` (via `#[serde(default)]`).
+fn de_opt_chain_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ChainId;
+    impl<'de> Visitor<'de> for ChainId {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a chain id as an integer or string")
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+    }
+    deserializer.deserialize_any(ChainId)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -38,23 +70,30 @@ pub struct Config {
 pub struct ChainConfig {
     /// Service / container name, e.g. "anvil-1".
     pub name: String,
-    /// Chain kind. Only "evm" is supported today.
+    /// Chain kind: "evm" (Anvil) or "starknet" (starknet-devnet).
     #[serde(default = "default_kind")]
     pub kind: String,
     /// Published host port for the RPC.
     pub port: u16,
-    pub chain_id: u64,
-    /// Block time in seconds (auto-mining interval).
+    /// Chain identifier. Required and numeric for EVM chains (Anvil
+    /// `--chain-id`). Not yet configurable for Starknet — devnet's default
+    /// (`SN_SEPOLIA`) is always used — so it may be omitted there. Accepts a TOML
+    /// integer or string.
+    #[serde(default, deserialize_with = "de_opt_chain_id")]
+    pub chain_id: Option<String>,
+    /// Block time in seconds (auto-mining interval). EVM-only; ignored for
+    /// Starknet chains.
     #[serde(default = "default_block_time")]
     pub block_time: u64,
-    /// Fork this chain from a live RPC (Anvil `--fork-url`). `${VAR}` references
-    /// are expanded from the environment on load, so an RPC key can stay out of
-    /// the file. A forked chain mirrors real chain state instead of the baked
-    /// test tokens.
+    /// Fork this chain from a live RPC — Anvil `--fork-url` for EVM chains,
+    /// starknet-devnet `--fork-network` for Starknet. `${VAR}` references are
+    /// expanded from the environment on load, so an RPC key can stay out of the
+    /// file. A forked chain mirrors real chain state instead of the baked test
+    /// tokens.
     #[serde(default)]
     pub fork_url: Option<String>,
-    /// Pin the fork to a block height (Anvil `--fork-block-number`). Requires
-    /// `fork_url`.
+    /// Pin the fork to a block height (Anvil `--fork-block-number`, devnet
+    /// `--fork-block`). Requires `fork_url`.
     #[serde(default)]
     pub fork_block: Option<u64>,
 }
@@ -67,7 +106,7 @@ impl Default for Config {
                     name: "anvil-1".to_string(),
                     kind: "evm".to_string(),
                     port: 8545,
-                    chain_id: 31337,
+                    chain_id: Some("31337".to_string()),
                     block_time: 1,
                     fork_url: None,
                     fork_block: None,
@@ -76,7 +115,17 @@ impl Default for Config {
                     name: "anvil-2".to_string(),
                     kind: "evm".to_string(),
                     port: 8546,
-                    chain_id: 31338,
+                    chain_id: Some("31338".to_string()),
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+                ChainConfig {
+                    name: "starknet-1".to_string(),
+                    kind: "starknet".to_string(),
+                    port: 5050,
+                    // Starknet uses devnet's default chain id (SN_SEPOLIA).
+                    chain_id: None,
                     block_time: 1,
                     fork_url: None,
                     fork_block: None,
@@ -170,12 +219,29 @@ fn validate(config: &Config) -> Result<()> {
     let mut ports = HashSet::new();
     let mut ids = HashSet::new();
     for c in &config.chains {
-        if c.kind != "evm" {
-            bail!(
-                "chain '{}': kind '{}' is not supported yet (only 'evm')",
-                c.name,
-                c.kind
-            );
+        match c.kind.as_str() {
+            "evm" => {
+                // Anvil needs a numeric chain id, so require one and check it parses.
+                let id = c.chain_id.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("chain '{}': evm chains require a numeric chain_id", c.name)
+                })?;
+                id.parse::<u64>().map_err(|_| {
+                    anyhow::anyhow!(
+                        "chain '{}': chain_id '{id}' must be a number for an evm chain",
+                        c.name
+                    )
+                })?;
+            }
+            "starknet" => {
+                // Starknet chains use devnet's default chain id (SN_SEPOLIA); a
+                // custom one isn't wired up yet. Forking IS supported via devnet's
+                // `--fork-network` (the shared `fork_url`/`fork_block` fields, with
+                // the generic `fork_block needs a fork_url` check below).
+            }
+            other => bail!(
+                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet)",
+                c.name
+            ),
         }
         if !names.insert(c.name.as_str()) {
             bail!("duplicate chain name '{}'", c.name);
@@ -186,8 +252,10 @@ fn validate(config: &Config) -> Result<()> {
                 c.port
             );
         }
-        if !ids.insert(c.chain_id) {
-            bail!("duplicate chain_id {}", c.chain_id);
+        if let Some(id) = &c.chain_id
+            && !ids.insert(id.as_str())
+        {
+            bail!("duplicate chain_id {id}");
         }
         if c.fork_block.is_some() && c.fork_url.is_none() {
             bail!("chain '{}': fork_block needs a fork_url to pin", c.name);
@@ -208,19 +276,24 @@ mod tests {
     }
 
     #[test]
-    fn default_is_two_anvil_chains() {
+    fn default_is_two_anvil_chains_and_a_starknet_chain() {
         let c = Config::default();
-        assert_eq!(c.chains.len(), 2);
+        assert_eq!(c.chains.len(), 3);
         assert_eq!(c.chains[0].name, "anvil-1");
         assert_eq!(c.chains[0].port, 8545);
-        assert_eq!(c.chains[1].chain_id, 31338);
+        assert_eq!(c.chains[1].chain_id.as_deref(), Some("31338"));
+        // The Starknet chain is on by default; it carries no chain_id.
+        assert_eq!(c.chains[2].name, "starknet-1");
+        assert_eq!(c.chains[2].kind, "starknet");
+        assert_eq!(c.chains[2].port, 5050);
+        assert!(c.chains[2].chain_id.is_none());
     }
 
     #[test]
     fn missing_file_yields_defaults() {
         let dir = tempdir().unwrap();
         let c = load_from(&dir.path().join(CONFIG_FILE)).unwrap();
-        assert_eq!(c.chains.len(), 2);
+        assert_eq!(c.chains.len(), 3);
     }
 
     #[test]
@@ -264,9 +337,37 @@ mod tests {
         assert_eq!(c.chains.len(), 1);
         assert_eq!(c.chains[0].name, "main");
         assert_eq!(c.chains[0].port, 9000);
+        // an integer chain_id in TOML is stored as a string.
+        assert_eq!(c.chains[0].chain_id.as_deref(), Some("1337"));
         // kind + block_time defaulted.
         assert_eq!(c.chains[0].kind, "evm");
         assert_eq!(c.chains[0].block_time, 1);
+    }
+
+    #[test]
+    fn parses_a_mixed_evm_and_starknet_topology() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "anvil-1"
+            port = 8545
+            chain_id = 31337
+
+            [[chains]]
+            name = "sn-1"
+            kind = "starknet"
+            port = 5051
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains.len(), 2);
+        assert_eq!(c.chains[0].kind, "evm");
+        assert_eq!(c.chains[0].chain_id.as_deref(), Some("31337"));
+        assert_eq!(c.chains[1].kind, "starknet");
+        // The Starknet chain omits chain_id; it must still default to None.
+        assert!(c.chains[1].chain_id.is_none());
     }
 
     #[test]
@@ -360,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_evm_kind() {
+    fn rejects_unsupported_kind() {
         let dir = tempdir().unwrap();
         let path = write(
             &dir,
@@ -374,6 +475,87 @@ mod tests {
         );
         let err = load_from(&path).unwrap_err();
         assert!(err.to_string().contains("not supported yet"), "{err}");
+    }
+
+    #[test]
+    fn accepts_starknet_kind_without_a_chain_id() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "starknet-1"
+            kind = "starknet"
+            port = 5050
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].kind, "starknet");
+        // Starknet uses devnet's default chain id, so none is required.
+        assert!(c.chains[0].chain_id.is_none());
+    }
+
+    #[test]
+    fn evm_requires_a_numeric_chain_id() {
+        let dir = tempdir().unwrap();
+        // Missing chain_id on an evm chain is an error.
+        let missing = write(&dir, "[[chains]]\nname = \"a\"\nport = 8545\n");
+        let err = load_from(&missing).unwrap_err();
+        assert!(
+            err.to_string().contains("require a numeric chain_id"),
+            "{err}"
+        );
+
+        // A non-numeric chain_id on an evm chain is an error.
+        let non_numeric = write(
+            &dir,
+            "[[chains]]\nname = \"a\"\nport = 8545\nchain_id = \"SN_SEPOLIA\"\n",
+        );
+        let err = load_from(&non_numeric).unwrap_err();
+        assert!(err.to_string().contains("must be a number"), "{err}");
+    }
+
+    #[test]
+    fn starknet_accepts_fork_fields() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "sn"
+            kind = "starknet"
+            port = 5050
+            fork_url = "https://rpc.example/key"
+            fork_block = 900000
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].kind, "starknet");
+        assert_eq!(
+            c.chains[0].fork_url.as_deref(),
+            Some("https://rpc.example/key")
+        );
+        assert_eq!(c.chains[0].fork_block, Some(900000));
+    }
+
+    #[test]
+    fn starknet_fork_block_still_needs_a_url() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "sn"
+            kind = "starknet"
+            port = 5050
+            fork_block = 900000
+            "#,
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("fork_block needs a fork_url"),
+            "{err}"
+        );
     }
 
     #[test]

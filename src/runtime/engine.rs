@@ -27,6 +27,18 @@ pub struct ExplorerTarget {
     pub rpc_host_port: u16,
 }
 
+/// How the orchestrator decides a chain's RPC is ready. Different engines speak
+/// different protocols — an EVM node answers JSON-RPC, Starknet-devnet exposes a
+/// plain HTTP liveness endpoint — so each engine describes its own probe.
+pub enum HealthProbe {
+    /// POST a JSON-RPC request calling `method` and consider the chain ready once
+    /// the response carries a `result` (used by EVM chains, e.g. `eth_chainId`).
+    JsonRpc { method: &'static str },
+    /// GET `path` and consider the chain ready on an HTTP `200` (used by
+    /// Starknet-devnet's `/is_alive`).
+    HttpGet { path: &'static str },
+}
+
 /// A file an engine needs written under the state dir before its container
 /// boots (e.g. a chain snapshot mounted into the container).
 pub struct StagedFile {
@@ -47,6 +59,8 @@ pub trait Engine {
     fn compose_service(&self, mode: StateMode) -> String;
     /// How to reach this chain, for the manifest.
     fn manifest_entry(&self) -> ChainEntry;
+    /// How to check this chain's RPC is up, once its container is running.
+    fn health_probe(&self) -> HealthProbe;
     /// Files to write under the state dir before boot. Defaults to none.
     fn staged_files(&self, _mode: StateMode) -> Vec<StagedFile> {
         Vec::new()

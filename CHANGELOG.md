@@ -12,6 +12,42 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Starknet chains** — a `starknet-devnet` chain (`starknet-1`, `:5050`) now
+  boots **by default** alongside the two Anvil chains, with deterministic
+  predeployed accounts, the ETH/STRK fee tokens, and baked **Cairo test tokens**
+  (USDC, WBTC, plus fee-on-transfer FEE and rebasing REB) at fixed addresses —
+  all in the unified `status`/manifest. The chain kind is selectable in
+  `wharfnet.toml` with `kind = "starknet"`.
+- **Starknet faucet** — the same `faucet <chain> <address> [amount] [--token]`
+  command funds Starknet addresses: ETH and STRK through devnet's `devnet_mint`
+  cheat, and the Cairo test tokens through a signed invoke of their public `mint`
+  (submitted by a predeployed dev account, so the recipient needs no key). Amounts
+  are whole units scaled by decimals; funding is additive. Signing uses the
+  maintained [`starknet-rust`](https://github.com/software-mansion/starknet-rust)
+  client on **JSON-RPC 0.10**, matching the pinned devnet image and public testnet.
+- **Starknet persistence** — `up --resume` / `up --reset` now cover Starknet
+  chains too. Each persists to its own `session-<chain>.json` replay log, seeded
+  once from the baked tokens and then dumped on every block (devnet mines one per
+  transaction), so balances, mints, and deployments survive `down` → `up --resume`
+  and are wiped by `up --reset` — matching the EVM chains.
+- **Starknet block explorer (on by default, `up --bare` to skip)** — Starknet
+  chains now boot with starknet-devnet's built-in web UI explorer (`--ui`),
+  served in-process at `/ui` on the chain's own RPC port and listed in the
+  manifest and by `status`. Unlike the EVM chains' Otterscan (a separate
+  container per chain, EVM-only), devnet serves its explorer itself, so there's
+  no extra container or published port — every `up` is browsable for both stacks.
+- **Starknet forking** — the `fork_url`/`fork_block` fields now work on Starknet
+  chains too, booting them as a fork of a live network via starknet-devnet's
+  `--fork-network`, so you can test against real Starknet contracts, classes, and
+  balances locally. `${VAR}` expansion and URL redaction are shared with the EVM
+  path; a forked chain mirrors live state, so it skips the baked Cairo test
+  tokens. Reuses the same `wharfnet.toml` seam as the EVM `--fork-url`.
+- **Starknet chain control** — `wharfnet starknet mine`, `increase-time`, `warp`,
+  and `impersonate` wrap starknet-devnet's cheat JSON-RPC to drive a running
+  chain, mirroring `wharfnet evm …` and grouped under `starknet` so each chain
+  kind owns its own verbs. Two devnet-imposed differences: there's no
+  `snapshot`/`revert` (devnet has no numbered-snapshot mechanism), and
+  `impersonate` requires a forked chain (it's refused otherwise, with a hint).
 - **Mainnet forking** — point a chain at a live RPC with `fork_url` (and optional
   `fork_block`) in `wharfnet.toml` and it boots as a fork of that network via
   Anvil's `--fork-url`, so you can test against real balances, contracts, and
@@ -63,6 +99,6 @@ under _Unreleased_ and the CLI surface may still change.
 ### Notes
 
 - `deploy` is scaffolded but not yet implemented.
-- EVM only so far; Solana and Starknet engines are planned.
+- EVM and Starknet chains are supported; Solana is planned.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

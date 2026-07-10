@@ -3,7 +3,7 @@
 //! IDs, and funded accounts. This is the generalized successor to a
 //! hand-maintained `deployments.json`.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -19,7 +19,10 @@ pub struct ChainEntry {
     pub name: String,
     pub kind: String,
     pub rpc: String,
-    pub chain_id: u64,
+    /// Chain identifier as a string: a decimal number for EVM chains (e.g.
+    /// "31337"), or a felt for Starknet (e.g. "0x534e5f5345504f4c4941"). It's a
+    /// string because Starknet chain IDs are felts that overflow `u64`.
+    pub chain_id: String,
     pub accounts: Vec<Account>,
     /// Test tokens pre-deployed on this chain at known addresses.
     #[serde(default)]
@@ -84,6 +87,28 @@ impl Manifest {
         let manifest = serde_json::from_str(&data).context("parsing manifest")?;
         Ok(manifest)
     }
+
+    /// Chains matching `selector` — either a chain kind (`evm`, `starknet`),
+    /// selecting every chain of that kind, or a specific chain name (`anvil-1`).
+    /// Errors, listing what is available, when nothing matches. Shared by the
+    /// faucet and the per-kind chain-control commands.
+    pub fn select(&self, selector: &str) -> Result<Vec<&ChainEntry>> {
+        let matches: Vec<&ChainEntry> = self
+            .chains
+            .iter()
+            .filter(|c| c.name == selector || c.kind == selector)
+            .collect();
+        if matches.is_empty() {
+            let available = self
+                .chains
+                .iter()
+                .map(|c| format!("{} ({})", c.name, c.kind))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("no chain matching '{selector}'. Available: {available}");
+        }
+        Ok(matches)
+    }
 }
 
 #[cfg(test)]
@@ -96,7 +121,7 @@ mod tests {
             name: "anvil-1".into(),
             kind: "evm".into(),
             rpc: "http://127.0.0.1:8545".into(),
-            chain_id: 31337,
+            chain_id: "31337".into(),
             accounts: vec![Account {
                 address: "0xabc".into(),
                 private_key: "0xdef".into(),
@@ -134,7 +159,7 @@ mod tests {
 
         let loaded = Manifest::read(&path).unwrap();
         assert_eq!(loaded.chains[0].name, "anvil-1");
-        assert_eq!(loaded.chains[0].chain_id, 31337);
+        assert_eq!(loaded.chains[0].chain_id, "31337");
         assert_eq!(loaded.chains[0].accounts[0].address, "0xabc");
         assert_eq!(loaded.chains[0].tokens[0].symbol, "USDC");
         assert_eq!(loaded.chains[0].tokens[0].decimals, 6);
@@ -173,11 +198,21 @@ mod tests {
             &path,
             r#"{"version":"0.1","project":"wharfnet","chains":[
                 {"name":"anvil-1","kind":"evm","rpc":"http://127.0.0.1:8545",
-                 "chain_id":31337,"accounts":[]}]}"#,
+                 "chain_id":"31337","accounts":[]}]}"#,
         )
         .unwrap();
         let loaded = Manifest::read(&path).unwrap();
         assert!(loaded.chains[0].tokens.is_empty());
+    }
+
+    #[test]
+    fn select_matches_by_kind_and_name_and_errors_otherwise() {
+        let m = sample(); // one evm chain named "anvil-1"
+        assert_eq!(m.select("evm").unwrap().len(), 1);
+        assert_eq!(m.select("anvil-1").unwrap()[0].name, "anvil-1");
+        let err = m.select("nope").unwrap_err();
+        assert!(err.to_string().contains("no chain matching"), "{err}");
+        assert!(err.to_string().contains("anvil-1 (evm)"), "{err}");
     }
 
     #[test]
@@ -204,6 +239,6 @@ mod tests {
     fn serializes_to_pretty_json() {
         let json = serde_json::to_string_pretty(&sample()).unwrap();
         assert!(json.contains("\"project\": \"wharfnet\""));
-        assert!(json.contains("\"chain_id\": 31337"));
+        assert!(json.contains("\"chain_id\": \"31337\""));
     }
 }
