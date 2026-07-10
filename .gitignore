@@ -15,3 +15,7 @@ src/resources/contracts/out/
 src/resources/contracts/cache/
 src/resources/contracts/broadcast/
 src/resources/contracts/lib/
+
+# Scarb (Cairo) build artifacts — produced by gen-starknet-token-state.sh; the
+# baked replay under resources/state is the committed artifact, not these.
+src/resources/contracts/starknet/target/

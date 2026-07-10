@@ -39,7 +39,8 @@ Early WIP, but the **EVM stack works end to end today**. See the
 - [x] Endpoints manifest — `.wharfnet/wharfnet.json`
 - [x] Boot waits for readiness; `down` tears it all down (CI-friendly)
 - [x] Starknet chain (`starknet-devnet`) — boots alongside EVM chains with
-      predeployed accounts and the ETH/STRK fee tokens, in the unified
+      predeployed accounts, ETH/STRK fee tokens, and baked Cairo test tokens
+      (USDC, WBTC + weird tokens) at fixed addresses, in the unified
       `status`/manifest
 
 **Planned**
@@ -280,9 +281,32 @@ tokens** at their canonical addresses — all recorded in the manifest. The RPC 
 served at `http://127.0.0.1:<port>/rpc`, and readiness is checked against
 devnet's `/is_alive` endpoint.
 
+### Starknet test tokens
+
+Every Starknet chain also boots with a set of **Cairo test tokens** pre-deployed
+at fixed addresses (identical on every chain), each with a **public
+`mint(recipient, amount)`** and seeded onto the dev accounts. As on the EVM side,
+the first two are standard and the rest are deliberately **"weird"** for
+token-integration testing:
+
+| Token | Decimals | Address | Behaviour |
+| ----- | -------- | ------- | --------- |
+| USDC  | 6  | `0x040b582f9ba878be8e78a6ddc665dfdfd55a4deae9ceeb40115abcfa1f8df686` | standard |
+| WBTC  | 8  | `0x029a79ea0c5716d63250a0bbf2462509f3c0eed9d29a2e1c02c63fa7b2b1db66` | standard |
+| FEE   | 18 | `0x07edc0e8738c7804ad087344c1c54d817f739dd4179f1dd4e11ea5badada47aa` | fee-on-transfer (1% burned on `transfer`) |
+| REB   | 18 | `0x06e94ed66ea18ea06a9bed118a8d6ebc3cc19d31ed025bd5abadd3477d300500` | rebasing (`rebase(factor)` rescales balances) |
+
+Sources live in `src/resources/contracts/starknet/` (self-contained Cairo, no
+OpenZeppelin dependency). The EVM stack's USDT-style no-return token has no
+analogue — Cairo's ERC-20 ABI returns `bool` by the standard. Under the hood the
+tokens are baked into a devnet **replay log** that `wharfnet up` re-executes on
+boot; regenerate it after editing the sources with
+`./scripts/gen-starknet-token-state.sh` (needs `scarb` + `starkli`).
+
 Still landing (see the roadmap): the unified `faucet` and `up --resume`/`--reset`
-persistence don't cover Starknet chains yet, and there's no bundled explorer for
-them (Otterscan is EVM-only).
+persistence don't cover Starknet chains yet (for now `mint` is callable directly,
+e.g. with `starkli`), and there's no bundled explorer for them (Otterscan is
+EVM-only).
 
 ## State & persistence
 
