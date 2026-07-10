@@ -2,6 +2,7 @@
 
 mod evm;
 mod runtime;
+mod starknet;
 #[cfg(test)]
 mod testkit;
 

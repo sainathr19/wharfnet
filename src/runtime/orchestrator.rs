@@ -15,10 +15,11 @@ use std::time::{Duration, Instant};
 
 use super::config::{self, Config};
 use super::docker;
-use super::engine::{Engine, StateMode};
+use super::engine::{Engine, HealthProbe, StateMode};
 use super::manifest::Manifest;
 use super::ui;
 use crate::evm::engine::EvmEngine;
+use crate::starknet::engine::StarknetEngine;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
 pub(crate) const DEFAULT_STATE_DIR: &str = ".wharfnet";
@@ -63,21 +64,32 @@ pub(crate) fn manifest_path(base: &Path) -> PathBuf {
     base.join("wharfnet.json")
 }
 
-/// Build the engines described by `config`. EVM chains only today; other kinds
-/// are rejected earlier by config validation. Solana/Starknet engines will be
-/// dispatched on `kind` here as they land.
+/// Build the engines described by `config`, dispatching on each chain's `kind`.
+/// `config::validate` has already guaranteed the kind is supported and that an
+/// EVM chain carries a numeric `chain_id`, so the parsing here can't realistically
+/// fail; it's an internal invariant, not user-facing validation.
 fn engines_for(config: &Config) -> Vec<Box<dyn Engine>> {
-    config
-        .chains
-        .iter()
-        .map(|c| {
-            let mut engine = EvmEngine::anvil(&c.name, c.port, c.chain_id).block_time(c.block_time);
+    config.chains.iter().map(engine_for).collect()
+}
+
+fn engine_for(c: &config::ChainConfig) -> Box<dyn Engine> {
+    match c.kind.as_str() {
+        "evm" => {
+            let chain_id = c
+                .chain_id
+                .as_deref()
+                .expect("validate() guarantees an evm chain_id")
+                .parse::<u64>()
+                .expect("validate() guarantees the evm chain_id is numeric");
+            let mut engine = EvmEngine::anvil(&c.name, c.port, chain_id).block_time(c.block_time);
             if let Some(url) = &c.fork_url {
                 engine = engine.fork(url.clone(), c.fork_block);
             }
-            Box::new(engine) as Box<dyn Engine>
-        })
-        .collect()
+            Box::new(engine)
+        }
+        "starknet" => Box::new(StarknetEngine::devnet(&c.name, c.port)),
+        other => unreachable!("validate() rejects unsupported kind '{other}'"),
+    }
 }
 
 /// A resolved Otterscan explorer for one chain: its service name, the host port
@@ -308,7 +320,7 @@ pub(crate) fn up_in(
             engine.name(),
             engine.host_port()
         ));
-        if wait_for_rpc(engine.host_port(), READY_TIMEOUT) {
+        if wait_ready(engine.host_port(), &engine.health_probe(), READY_TIMEOUT) {
             ui::finish_ok(&pb, format!("{} ready", engine.name()));
         } else {
             ui::finish_err(&pb, format!("{} timed out", engine.name()));
@@ -434,10 +446,10 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
     Ok(())
 }
 
-fn wait_for_rpc(port: u16, timeout: Duration) -> bool {
+fn wait_ready(port: u16, probe: &HealthProbe, timeout: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
-        if rpc_ready(port) {
+        if probe_ready(port, probe) {
             return true;
         }
         sleep(Duration::from_secs(1));
@@ -445,29 +457,45 @@ fn wait_for_rpc(port: u16, timeout: Duration) -> bool {
     false
 }
 
-/// Minimal, dependency-free JSON-RPC health check: send `eth_chainId` and look
-/// for a `result` in the response.
-fn rpc_ready(port: u16) -> bool {
+/// Minimal, dependency-free readiness check driven by the engine's [`HealthProbe`]:
+/// either POST a JSON-RPC call and look for a `result`, or GET a path and look for
+/// an HTTP `200`.
+fn probe_ready(port: u16, probe: &HealthProbe) -> bool {
+    match probe {
+        HealthProbe::JsonRpc { method } => {
+            let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":[]}}"#);
+            let request = format!(
+                "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            match http_roundtrip(port, &request) {
+                Some(response) => response.contains("\"result\""),
+                None => false,
+            }
+        }
+        HealthProbe::HttpGet { path } => {
+            let request =
+                format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            match http_roundtrip(port, &request) {
+                Some(response) => response.starts_with("HTTP/1.1 200"),
+                None => false,
+            }
+        }
+    }
+}
+
+/// Send a raw HTTP request to `127.0.0.1:port` and return the response text, or
+/// `None` if the connection or exchange fails.
+fn http_roundtrip(port: u16, request: &str) -> Option<String> {
     let addr = format!("127.0.0.1:{port}");
-    let Ok(mut stream) = TcpStream::connect(&addr) else {
-        return false;
-    };
+    let mut stream = TcpStream::connect(&addr).ok()?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
-
-    let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}"#;
-    let request = format!(
-        "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-
-    if stream.write_all(request.as_bytes()).is_err() {
-        return false;
-    }
+    stream.write_all(request.as_bytes()).ok()?;
     let mut response = String::new();
     let _ = stream.read_to_string(&mut response);
-    response.contains("\"result\"")
+    Some(response)
 }
 
 #[cfg(test)]
@@ -573,12 +601,12 @@ mod tests {
     fn engines_use_distinct_ports_and_chain_ids() {
         let engines = engines();
         let ports: Vec<u16> = engines.iter().map(|e| e.host_port()).collect();
-        let chain_ids: Vec<u64> = engines
+        let chain_ids: Vec<String> = engines
             .iter()
             .map(|e| e.manifest_entry().chain_id)
             .collect();
         assert_eq!(ports, vec![8545, 8546]);
-        assert_eq!(chain_ids, vec![31337, 31338]);
+        assert_eq!(chain_ids, vec!["31337", "31338"]);
         // No two chains may share a host port or the compose file won't bind.
         assert_ne!(ports[0], ports[1]);
     }
@@ -666,7 +694,7 @@ mod tests {
             name: "anvil-1".into(),
             kind: "evm".into(),
             rpc: "http://127.0.0.1:8545".into(),
-            chain_id: 31337,
+            chain_id: "31337".into(),
             accounts: vec![Account {
                 address: "0xabc".into(),
                 private_key: "0xdef".into(),
@@ -699,52 +727,71 @@ mod tests {
 
     // ---- health check, exercised against a one-shot mock TCP server ----
 
-    fn spawn_mock_rpc(response_body: &'static str) -> u16 {
+    const EVM_PROBE: HealthProbe = HealthProbe::JsonRpc {
+        method: "eth_chainId",
+    };
+    const HTTP_PROBE: HealthProbe = HealthProbe::HttpGet { path: "/is_alive" };
+
+    /// Serve one connection with a fixed raw HTTP response.
+    fn spawn_mock(response: &'static str) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
                 let mut buf = [0u8; 1024];
                 let _ = stream.read(&mut buf);
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    response_body.len(),
-                    response_body
-                );
-                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.write_all(response.as_bytes());
             }
         });
         port
     }
 
+    const OK_RPC: &str = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x7a69\"}";
+
     #[test]
-    fn rpc_ready_true_when_result_present() {
-        let port = spawn_mock_rpc(r#"{"jsonrpc":"2.0","id":1,"result":"0x7a69"}"#);
+    fn probe_ready_true_when_json_rpc_result_present() {
+        let port = spawn_mock(OK_RPC);
         std::thread::sleep(Duration::from_millis(50));
-        assert!(rpc_ready(port));
+        assert!(probe_ready(port, &EVM_PROBE));
     }
 
     #[test]
-    fn rpc_ready_false_without_result() {
-        let port = spawn_mock_rpc(r#"{"jsonrpc":"2.0","id":1,"error":"boom"}"#);
+    fn probe_ready_false_when_json_rpc_has_no_result() {
+        let port =
+            spawn_mock("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{\"id\":1,\"error\":\"boom\"}");
         std::thread::sleep(Duration::from_millis(50));
-        assert!(!rpc_ready(port));
+        assert!(!probe_ready(port, &EVM_PROBE));
     }
 
     #[test]
-    fn rpc_ready_false_when_nothing_listening() {
-        assert!(!rpc_ready(1));
-    }
-
-    #[test]
-    fn wait_for_rpc_succeeds_when_server_is_up() {
-        let port = spawn_mock_rpc(r#"{"result":"ok"}"#);
+    fn probe_ready_true_when_http_get_returns_200() {
+        let port = spawn_mock("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nAlive!!!");
         std::thread::sleep(Duration::from_millis(50));
-        assert!(wait_for_rpc(port, Duration::from_secs(3)));
+        assert!(probe_ready(port, &HTTP_PROBE));
     }
 
     #[test]
-    fn wait_for_rpc_times_out_when_nothing_listening() {
-        assert!(!wait_for_rpc(2, Duration::from_millis(10)));
+    fn probe_ready_false_when_http_get_returns_non_200() {
+        let port = spawn_mock("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!probe_ready(port, &HTTP_PROBE));
+    }
+
+    #[test]
+    fn probe_ready_false_when_nothing_listening() {
+        assert!(!probe_ready(1, &EVM_PROBE));
+        assert!(!probe_ready(1, &HTTP_PROBE));
+    }
+
+    #[test]
+    fn wait_ready_succeeds_when_server_is_up() {
+        let port = spawn_mock(OK_RPC);
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(wait_ready(port, &EVM_PROBE, Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn wait_ready_times_out_when_nothing_listening() {
+        assert!(!wait_ready(2, &EVM_PROBE, Duration::from_millis(10)));
     }
 }

@@ -3,7 +3,9 @@
 **One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.**
 
 > ⚠️ Early WIP. The EVM stack — chains, test tokens, faucet, explorer, and
-> persistence — works today; Solana and Starknet are next.
+> persistence — works today. Starknet chains now **boot** alongside EVM ones
+> (predeployed accounts + ETH/STRK fee tokens); their faucet and persistence are
+> next, then Solana.
 
 `wharfnet` is the local harbor for your chains: boot EVM, Solana, and Starknet
 networks locally with a single command, fund accounts from a unified faucet,
@@ -36,11 +38,15 @@ Early WIP, but the **EVM stack works end to end today**. See the
 - [x] EVM chain control — `wharfnet evm mine | warp | impersonate | snapshot | revert`
 - [x] Endpoints manifest — `.wharfnet/wharfnet.json`
 - [x] Boot waits for readiness; `down` tears it all down (CI-friendly)
+- [x] Starknet chain (`starknet-devnet`) — boots alongside EVM chains with
+      predeployed accounts and the ETH/STRK fee tokens, in the unified
+      `status`/manifest
 
 **Planned**
 
 - [ ] Solana chain — validator, faucet, SPL tokens
-- [ ] Starknet chain — devnet, faucet, Cairo tokens
+- [ ] Starknet faucet & persistence — fund ETH/STRK, `up --resume`/`--reset`
+- [ ] Starknet chain control — `wharfnet starknet …` (mine, time-travel, …)
 - [ ] `deploy` command — deploy bundled/custom contracts on demand
 - [ ] CI polish — machine-readable `status --json`, non-interactive mode
 
@@ -55,9 +61,10 @@ drives a chain — `up`, `down`, `faucet`, and `wharfnet evm …` — shells out
 `docker compose`, so CI runners need a Docker daemon available too.
 
 You do **not** need Foundry, a Solana toolchain, or a Starknet devnet installed:
-each chain runs from a pinned image (Anvil today) and `cast` runs inside the
-container — installing Docker is the whole setup. Building from source also needs
-a stable **Rust** toolchain (see [Quickstart](#quickstart)).
+each chain runs from a pinned image (Anvil and `starknet-devnet` today) — for EVM
+chains `cast` runs inside the container, so installing Docker is the whole setup.
+Building from source also needs a stable **Rust** toolchain (see
+[Quickstart](#quickstart)).
 
 Without Docker, chain commands fail fast with a clear message; only
 `wharfnet compose` (render the Compose file) and `wharfnet status` (read the
@@ -114,12 +121,19 @@ block_time = 1      # optional, defaults to 1
 name = "l2"
 port = 8546
 chain_id = 42161
+
+[[chains]]
+name = "sn-1"
+kind = "starknet"   # boots a starknet-devnet chain
+port = 5050         # RPC is published at http://127.0.0.1:5050/rpc
 ```
 
-Each chain needs a unique `name`, `port`, and `chain_id`; `kind` defaults to
-`evm` (the only kind today). Accounts and test tokens come from the baked presets
-and aren't configured here. Run `wharfnet compose` to see the resolved setup —
-and to catch config errors — without booting anything.
+Each chain needs a unique `name` and `port`; `kind` defaults to `evm` and may be
+`starknet`. EVM chains also need a numeric `chain_id`; Starknet chains omit it —
+they use devnet's default (`SN_SEPOLIA`), which isn't configurable yet. Accounts
+and test tokens come from the baked presets and aren't configured here. Run
+`wharfnet compose` to see the resolved setup — and to catch config errors —
+without booting anything.
 
 By default wharfnet reads `./wharfnet.toml`. Point at a different file with
 `--config <path>` (or `-c`) on `up`/`compose`, or the `WHARFNET_CONFIG` env var —
@@ -241,7 +255,30 @@ wharfnet evm revert 0x1              # roll state back to that snapshot
 `impersonate` lets you send transactions as **any** address with no private key
 (great with forked state), and `snapshot`/`revert` give tests a cheap reset
 point. These live under `evm` because they're Anvil-specific — other chain kinds
-will get their own namespaces (`wharfnet solana …`, etc.).
+get their own namespaces (`wharfnet starknet …`, `wharfnet solana …`).
+
+## Starknet chains
+
+Add a `kind = "starknet"` chain to `wharfnet.toml` and `wharfnet up` boots a
+[`starknet-devnet`](https://github.com/0xSpaceShard/starknet-devnet) instance
+next to your EVM chains — one command, one manifest, one `status`:
+
+```sh
+wharfnet up --bare
+curl http://127.0.0.1:5050/is_alive                                   # -> Alive!!!
+curl -s -X POST http://127.0.0.1:5050/rpc \
+  -d '{"jsonrpc":"2.0","id":1,"method":"starknet_chainId","params":[]}'  # -> SN_SEPOLIA
+```
+
+Each Starknet chain comes with **deterministic predeployed accounts** (fixed
+`--seed`, so they're identical every boot) and the standard **ETH and STRK fee
+tokens** at their canonical addresses — all recorded in the manifest. The RPC is
+served at `http://127.0.0.1:<port>/rpc`, and readiness is checked against
+devnet's `/is_alive` endpoint.
+
+Still landing (see the roadmap): the unified `faucet` and `up --resume`/`--reset`
+persistence don't cover Starknet chains yet, and there's no bundled explorer for
+them (Otterscan is EVM-only).
 
 ## State & persistence
 

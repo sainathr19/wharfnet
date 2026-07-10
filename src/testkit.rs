@@ -45,17 +45,31 @@ impl Localnet {
     /// auto-mining so block-count assertions stay deterministic. Panics on
     /// failure (this is test-only code).
     pub(crate) fn boot(chain: &str, port: u16, chain_id: u64, block_time: u64) -> Localnet {
-        let dir = tempfile::TempDir::new_in(".").expect("create temp dir under crate root");
         // A single-chain topology on a dedicated high port keeps parallel e2e
         // tests from colliding with each other or a dev localnet on 8545/8546.
-        let config = dir.path().join("wharfnet.toml");
-        fs::write(
-            &config,
-            format!(
+        Self::boot_with_config(
+            chain,
+            &format!(
                 "[[chains]]\nname = \"{chain}\"\nport = {port}\nchain_id = {chain_id}\nblock_time = {block_time}\n"
             ),
         )
-        .expect("write test config");
+    }
+
+    /// Boot one `starknet-devnet` chain named `chain` on host `port`, isolated
+    /// under its own temp dir and compose project. Panics on failure.
+    pub(crate) fn boot_starknet(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\n"),
+        )
+    }
+
+    /// Write `config_body` as the single-chain `wharfnet.toml` and boot it fresh,
+    /// with no explorer, in an isolated temp dir + compose project.
+    fn boot_with_config(chain: &str, config_body: &str) -> Localnet {
+        let dir = tempfile::TempDir::new_in(".").expect("create temp dir under crate root");
+        let config = dir.path().join("wharfnet.toml");
+        fs::write(&config, config_body).expect("write test config");
 
         let net = Localnet {
             dir,

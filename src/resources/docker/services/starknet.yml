@@ -1,0 +1,10 @@
+  {{NAME}}:
+    image: {{IMAGE}}
+    # The image entrypoint already runs `starknet-devnet --host 0.0.0.0`, so this
+    # only appends extra args. Persistence (dump/load) args slot in at the end.
+    command: ["--port", "{{PORT}}", "--seed", "{{SEED}}", "--accounts", "{{ACCOUNTS}}"{{STATE_ARGS}}]
+    ports:
+      - "{{HOST_PORT}}:{{PORT}}"
+    volumes:
+      - "./state:/state"
+    restart: unless-stopped
