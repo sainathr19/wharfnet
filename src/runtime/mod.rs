@@ -6,6 +6,7 @@
 pub mod config;
 pub mod docker;
 pub mod engine;
+pub mod fork;
 pub mod manifest;
 pub mod orchestrator;
 pub mod ui;

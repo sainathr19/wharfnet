@@ -75,6 +75,17 @@ impl Localnet {
         )
     }
 
+    /// Boot a `starknet-devnet` chain that forks a live Starknet RPC at
+    /// `fork_url`. Panics on failure.
+    pub(crate) fn boot_starknet_fork(chain: &str, port: u16, fork_url: &str) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!(
+                "[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\nfork_url = \"{fork_url}\"\n"
+            ),
+        )
+    }
+
     /// Write `config_body` as the single-chain `wharfnet.toml` and boot it fresh,
     /// with no explorer, in an isolated temp dir + compose project.
     fn boot_with_config(chain: &str, config_body: &str) -> Localnet {

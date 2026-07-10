@@ -49,6 +49,8 @@ Early WIP, but the **EVM stack works end to end today**. See the
       Starknet chain's state across restarts, like the EVM chains
 - [x] Starknet block explorer — starknet-devnet's built-in web UI (`--ui`),
       on by default, served in-process at `/ui`
+- [x] Starknet forking — `fork_url`/`fork_block` per chain (devnet
+      `--fork-network`), mirroring a live Starknet network locally
 
 **Planned**
 
@@ -189,6 +191,23 @@ you send transactions as any address (a whale, a protocol admin) with no key.
 MAINNET_RPC=https://… wharfnet up --config fork.toml --bare
 cast call 0xA0b8…eB48 'symbol()(string)' --rpc-url http://127.0.0.1:8545   # -> "USDC"
 ```
+
+**Starknet chains fork the same way.** Set `fork_url` (and optionally
+`fork_block`) on a `kind = "starknet"` chain and it boots as a fork via
+starknet-devnet's `--fork-network`, mirroring the origin's contracts and
+balances. The same `${VAR}` expansion and redaction apply:
+
+```toml
+[[chains]]
+name = "sn-fork"
+kind = "starknet"
+port = 5050
+fork_url = "${STARKNET_RPC}"   # a Starknet JSON-RPC endpoint (e.g. Sepolia)
+fork_block = 900000            # optional; omit to track the latest block
+```
+
+The predeployed dev accounts still apply (devnet funds them over the fork), so
+you can send transactions against real forked state right away.
 
 ## Test tokens
 

@@ -85,14 +85,15 @@ pub struct ChainConfig {
     /// Starknet chains.
     #[serde(default = "default_block_time")]
     pub block_time: u64,
-    /// Fork this chain from a live RPC (Anvil `--fork-url`). `${VAR}` references
-    /// are expanded from the environment on load, so an RPC key can stay out of
-    /// the file. A forked chain mirrors real chain state instead of the baked
-    /// test tokens.
+    /// Fork this chain from a live RPC — Anvil `--fork-url` for EVM chains,
+    /// starknet-devnet `--fork-network` for Starknet. `${VAR}` references are
+    /// expanded from the environment on load, so an RPC key can stay out of the
+    /// file. A forked chain mirrors real chain state instead of the baked test
+    /// tokens.
     #[serde(default)]
     pub fork_url: Option<String>,
-    /// Pin the fork to a block height (Anvil `--fork-block-number`). Requires
-    /// `fork_url`.
+    /// Pin the fork to a block height (Anvil `--fork-block-number`, devnet
+    /// `--fork-block`). Requires `fork_url`.
     #[serde(default)]
     pub fork_block: Option<u64>,
 }
@@ -232,14 +233,10 @@ fn validate(config: &Config) -> Result<()> {
                 })?;
             }
             "starknet" => {
-                // Forking and a custom chain id aren't wired up for Starknet yet;
-                // devnet's default (SN_SEPOLIA) is always used.
-                if c.fork_url.is_some() || c.fork_block.is_some() {
-                    bail!(
-                        "chain '{}': fork_url/fork_block are only supported on evm chains",
-                        c.name
-                    );
-                }
+                // Starknet chains use devnet's default chain id (SN_SEPOLIA); a
+                // custom one isn't wired up yet. Forking IS supported via devnet's
+                // `--fork-network` (the shared `fork_url`/`fork_block` fields, with
+                // the generic `fork_block needs a fork_url` check below).
             }
             other => bail!(
                 "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet)",
@@ -519,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn starknet_rejects_fork_fields() {
+    fn starknet_accepts_fork_fields() {
         let dir = tempdir().unwrap();
         let path = write(
             &dir,
@@ -529,10 +526,36 @@ mod tests {
             kind = "starknet"
             port = 5050
             fork_url = "https://rpc.example/key"
+            fork_block = 900000
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].kind, "starknet");
+        assert_eq!(
+            c.chains[0].fork_url.as_deref(),
+            Some("https://rpc.example/key")
+        );
+        assert_eq!(c.chains[0].fork_block, Some(900000));
+    }
+
+    #[test]
+    fn starknet_fork_block_still_needs_a_url() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "sn"
+            kind = "starknet"
+            port = 5050
+            fork_block = 900000
             "#,
         );
         let err = load_from(&path).unwrap_err();
-        assert!(err.to_string().contains("only supported on evm"), "{err}");
+        assert!(
+            err.to_string().contains("fork_block needs a fork_url"),
+            "{err}"
+        );
     }
 
     #[test]

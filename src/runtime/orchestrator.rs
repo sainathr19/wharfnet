@@ -96,7 +96,13 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
             }
             Box::new(engine)
         }
-        "starknet" => Box::new(StarknetEngine::devnet(&c.name, c.port).ui(explorer)),
+        "starknet" => {
+            let mut engine = StarknetEngine::devnet(&c.name, c.port).ui(explorer);
+            if let Some(url) = &c.fork_url {
+                engine = engine.fork(url.clone(), c.fork_block);
+            }
+            Box::new(engine)
+        }
         other => unreachable!("validate() rejects unsupported kind '{other}'"),
     }
 }

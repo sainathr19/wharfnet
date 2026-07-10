@@ -43,12 +43,27 @@ const TOKEN_STATE_REL_PATH: &str = "state/starknet-tokens.json";
 /// [`StarknetEngine::tokens`] are the deterministic deploy addresses from this log.
 const STARKNET_TOKEN_STATE: &str = include_str!("../resources/state/starknet-tokens.json");
 
+/// Fork settings for a Starknet chain: mirror a live network's state from `url`
+/// (a Starknet JSON-RPC provider), optionally pinned to a block height.
+struct Fork {
+    url: String,
+    block: Option<u64>,
+}
+
+impl Fork {
+    /// A redacted description safe to record and print — the RPC key is dropped.
+    fn describe(&self) -> String {
+        crate::runtime::fork::describe(&self.url, self.block)
+    }
+}
+
 /// A `starknet-devnet`-backed Starknet chain.
 pub struct StarknetEngine {
     name: String,
     image: String,
     host_port: u16,
     ui: bool,
+    fork: Option<Fork>,
 }
 
 impl StarknetEngine {
@@ -58,7 +73,22 @@ impl StarknetEngine {
             image: DEVNET_IMAGE.to_string(),
             host_port,
             ui: false,
+            fork: None,
         }
+    }
+
+    /// Fork this chain from a live Starknet RPC, optionally pinned to a block
+    /// (devnet `--fork-network` / `--fork-block`). A forked chain mirrors real
+    /// network state, so — like the EVM chains — it does not load the baked Cairo
+    /// test tokens and advertises none.
+    pub fn fork(mut self, url: String, block: Option<u64>) -> Self {
+        self.fork = Some(Fork { url, block });
+        self
+    }
+
+    /// Whether this chain forks a live network.
+    fn is_forked(&self) -> bool {
+        self.fork.is_some()
     }
 
     /// Enable devnet's embedded web UI explorer (`--ui`), served at `/ui` on the
@@ -204,11 +234,29 @@ impl Engine for StarknetEngine {
         //     each tx to the per-chain session replay — the Starknet analogue of
         //     Anvil's `--state` — so work survives `docker stop` and `up --resume`
         //     with no explicit dump on teardown.
-        let (dump_on, dump_path) = match mode {
-            StateMode::Ephemeral => ("request", TOKEN_STATE_REL_PATH.to_string()),
-            StateMode::Persistent => ("block", self.session_rel_path()),
+        // A forked chain mirrors live state, so ephemeral forks load no baked
+        // replay (none is staged for them); persistent still dumps a session over
+        // the fork — exactly the split the EVM chains use.
+        let state_args = match (mode, self.is_forked()) {
+            (StateMode::Ephemeral, true) => String::new(),
+            (StateMode::Ephemeral, false) => {
+                format!(r#", "--dump-on", "request", "--dump-path", "/{TOKEN_STATE_REL_PATH}""#)
+            }
+            (StateMode::Persistent, _) => format!(
+                r#", "--dump-on", "block", "--dump-path", "/{}""#,
+                self.session_rel_path()
+            ),
         };
-        let state_args = format!(r#", "--dump-on", "{dump_on}", "--dump-path", "/{dump_path}""#);
+        let fork_args = match &self.fork {
+            None => String::new(),
+            Some(fork) => {
+                let mut a = format!(r#", "--fork-network", "{}""#, fork.url);
+                if let Some(block) = fork.block {
+                    a.push_str(&format!(r#", "--fork-block", "{block}""#));
+                }
+                a
+            }
+        };
         // devnet serves the explorer in-process, so enabling it is a single flag
         // on the chain's own command — no companion container like the EVM chains.
         let ui_args = if self.ui { r#", "--ui""# } else { "" };
@@ -220,10 +268,15 @@ impl Engine for StarknetEngine {
             .replace("{{SEED}}", &DEVNET_SEED.to_string())
             .replace("{{ACCOUNTS}}", &DEVNET_ACCOUNTS.to_string())
             .replace("{{STATE_ARGS}}", &state_args)
+            .replace("{{FORK_ARGS}}", &fork_args)
             .replace("{{UI_ARGS}}", ui_args)
     }
 
     fn manifest_entry(&self) -> ChainEntry {
+        // A forked chain mirrors live state; wharfnet deploys nothing onto it, so
+        // it advertises no baked tokens or infra contracts — only the fork. The
+        // predeployed dev accounts still apply (devnet funds them over the fork).
+        let forked = self.is_forked();
         ChainEntry {
             name: self.name.clone(),
             kind: "starknet".to_string(),
@@ -231,9 +284,13 @@ impl Engine for StarknetEngine {
             rpc: format!("http://127.0.0.1:{}/rpc", self.host_port),
             chain_id: SN_SEPOLIA.to_string(),
             accounts: Self::accounts(),
-            tokens: Self::tokens(),
-            contracts: Self::contracts(),
-            fork: None,
+            tokens: if forked { Vec::new() } else { Self::tokens() },
+            contracts: if forked {
+                Vec::new()
+            } else {
+                Self::contracts()
+            },
+            fork: self.fork.as_ref().map(Fork::describe),
             // devnet's own web UI, when `--ui` is on; no separate explorer service.
             explorer: self.explorer_url(),
         }
@@ -245,6 +302,11 @@ impl Engine for StarknetEngine {
     }
 
     fn staged_files(&self, mode: StateMode) -> Vec<StagedFile> {
+        // A forked chain loads no baked replay, so nothing to stage (mirrors
+        // EvmEngine; the compose args skip the dump/load slot too).
+        if self.is_forked() {
+            return Vec::new();
+        }
         match mode {
             // Refresh the baked token replay before every boot so an ephemeral
             // chain always starts from the known-good tokens (mirrors EvmEngine).
@@ -347,6 +409,61 @@ mod tests {
         // comment mentions `--ui` even when the flag itself is absent.
         assert!(!e.compose_service(StateMode::Ephemeral).contains("\"--ui\""));
         assert!(e.manifest_entry().explorer.is_none());
+    }
+
+    #[test]
+    fn forked_compose_adds_fork_network_and_skips_the_token_replay() {
+        let yaml = StarknetEngine::devnet("sn-fork", 5050)
+            .fork("https://rpc.example/key".to_string(), Some(900_000))
+            .compose_service(StateMode::Ephemeral);
+        assert!(yaml.contains("\"--fork-network\", \"https://rpc.example/key\""));
+        assert!(yaml.contains("\"--fork-block\", \"900000\""));
+        // A fork mirrors live state — an ephemeral fork loads no baked replay.
+        assert!(
+            !yaml.contains("--dump-on"),
+            "forked ephemeral must not load the baked replay: {yaml}"
+        );
+        assert!(!yaml.contains("starknet-tokens.json"));
+        assert!(!yaml.contains("{{"), "no placeholder should remain: {yaml}");
+    }
+
+    #[test]
+    fn forked_persistent_still_dumps_a_session_over_the_fork() {
+        let yaml = StarknetEngine::devnet("sn-fork", 5050)
+            .fork("https://rpc.example/key".to_string(), None)
+            .compose_service(StateMode::Persistent);
+        assert!(yaml.contains("\"--fork-network\", \"https://rpc.example/key\""));
+        assert!(!yaml.contains("--fork-block"), "no block was pinned");
+        // Persistent keeps dumping a session replay, layered over the fork.
+        assert!(yaml.contains("\"--dump-on\", \"block\""));
+        assert!(yaml.contains("\"--dump-path\", \"/state/session-sn-fork.json\""));
+    }
+
+    #[test]
+    fn forked_chain_stages_no_files() {
+        let e = StarknetEngine::devnet("sn-fork", 5050).fork("https://rpc/x".to_string(), None);
+        assert!(e.staged_files(StateMode::Ephemeral).is_empty());
+        assert!(e.staged_files(StateMode::Persistent).is_empty());
+    }
+
+    #[test]
+    fn forked_manifest_entry_redacts_the_url_and_drops_baked_presets() {
+        let entry = StarknetEngine::devnet("sn-fork", 5050)
+            .fork(
+                "https://sepolia.example.com/rpc/SECRET".to_string(),
+                Some(900_000),
+            )
+            .manifest_entry();
+        // The RPC key is never recorded.
+        assert_eq!(
+            entry.fork.as_deref(),
+            Some("https://sepolia.example.com @ block 900000")
+        );
+        // wharfnet deploys nothing onto a fork, so it advertises no presets — but
+        // the predeployed dev accounts still apply over the fork.
+        assert!(entry.tokens.is_empty());
+        assert!(entry.contracts.is_empty());
+        assert_eq!(entry.accounts.len(), 3);
     }
 
     #[test]
@@ -557,6 +674,84 @@ mod tests {
         assert_eq!(
             manifest.chains[0].explorer.as_deref(),
             Some(format!("http://127.0.0.1:{SN_UI_E2E_PORT}/ui").as_str())
+        );
+    }
+
+    /// Dedicated ports for the forking e2e: an origin chain and the chain that
+    /// forks it. Distinct from the other Starknet e2e ports so they run parallel.
+    const SN_FORK_ORIGIN_PORT: u16 = 5155;
+    const SN_FORK_CHILD_PORT: u16 = 5156;
+
+    #[test]
+    fn starknet_chain_can_fork_a_live_network() {
+        if !docker_available() {
+            eprintln!("skipping starknet fork e2e: docker unavailable");
+            return;
+        }
+        // Origin: a full wharfnet Starknet chain, so it already has the baked
+        // USDC deployed — something concrete the fork should see. Bound to
+        // `_origin` so it stays up (and tears down on drop) through the assertions.
+        let _origin = Localnet::boot_starknet("t-sn-fork-origin", SN_FORK_ORIGIN_PORT);
+
+        // Mint a marker balance on the origin, so we can prove the fork mirrors
+        // origin state (not just its own predeploys).
+        let marker = "0x456";
+        let mint = rpc(
+            SN_FORK_ORIGIN_PORT,
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"devnet_mint","params":{{"address":"{marker}","amount":424242,"unit":"WEI"}}}}"#
+            ),
+        );
+        assert!(
+            mint.contains("\"new_balance\""),
+            "origin mint failed: {mint}"
+        );
+
+        // Child: a wharfnet Starknet chain forking the origin's RPC. Inside the
+        // container the origin is reachable on the host via host.docker.internal.
+        let child = Localnet::boot_starknet_fork(
+            "t-sn-fork-child",
+            SN_FORK_CHILD_PORT,
+            &format!("http://host.docker.internal:{SN_FORK_ORIGIN_PORT}/rpc"),
+        );
+
+        // The fork mirrors the origin's marker balance...
+        let bal = rpc(
+            SN_FORK_CHILD_PORT,
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"devnet_getAccountBalance","params":{{"address":"{marker}","unit":"WEI"}}}}"#
+            ),
+        );
+        assert!(
+            bal.contains("\"424242\""),
+            "fork should mirror the origin's minted balance: {bal}"
+        );
+
+        // ...and sees the origin's baked USDC contract at its deterministic address.
+        let usdc = "0x040b582f9ba878be8e78a6ddc665dfdfd55a4deae9ceeb40115abcfa1f8df686";
+        let cls = rpc(
+            SN_FORK_CHILD_PORT,
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"starknet_getClassHashAt","params":["latest","{usdc}"]}}"#
+            ),
+        );
+        assert!(
+            cls.contains("\"result\""),
+            "fork should see the origin's USDC contract: {cls}"
+        );
+
+        // The manifest records the fork (redacted, no key) and, since a fork
+        // mirrors live state, advertises none of wharfnet's baked presets.
+        let manifest = Manifest::read(&manifest_path(child.base())).unwrap();
+        let chain = &manifest.chains[0];
+        assert_eq!(
+            chain.fork.as_deref(),
+            Some(format!("http://host.docker.internal:{SN_FORK_ORIGIN_PORT} @ latest").as_str())
+        );
+        assert!(chain.tokens.is_empty(), "a fork advertises no baked tokens");
+        assert!(
+            chain.contracts.is_empty(),
+            "a fork advertises no baked contracts"
         );
     }
 }

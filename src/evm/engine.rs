@@ -34,23 +34,7 @@ struct Fork {
 impl Fork {
     /// A redacted description safe to record and print — the RPC key is dropped.
     fn describe(&self) -> String {
-        let source = redact_url(&self.url);
-        match self.block {
-            Some(block) => format!("{source} @ block {block}"),
-            None => format!("{source} @ latest"),
-        }
-    }
-}
-
-/// Keep only `scheme://host` from a URL, dropping the path and query so an
-/// embedded API key is never recorded or printed.
-fn redact_url(url: &str) -> String {
-    match url.split_once("://") {
-        Some((scheme, rest)) => {
-            let host = rest.split(['/', '?']).next().unwrap_or(rest);
-            format!("{scheme}://{host}")
-        }
-        None => url.split(['/', '?']).next().unwrap_or(url).to_string(),
+        crate::runtime::fork::describe(&self.url, self.block)
     }
 }
 
@@ -494,15 +478,5 @@ mod tests {
         // wharfnet deploys nothing onto a fork, so it advertises no presets.
         assert!(entry.tokens.is_empty());
         assert!(entry.contracts.is_empty());
-    }
-
-    #[test]
-    fn redact_url_keeps_only_scheme_and_host() {
-        assert_eq!(
-            redact_url("https://eth-mainnet.g.alchemy.com/v2/KEY123"),
-            "https://eth-mainnet.g.alchemy.com"
-        );
-        assert_eq!(redact_url("http://localhost:8545"), "http://localhost:8545");
-        assert_eq!(redact_url("weird?q=1"), "weird");
     }
 }

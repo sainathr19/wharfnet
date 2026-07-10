@@ -36,6 +36,12 @@ under _Unreleased_ and the CLI surface may still change.
   manifest and by `status`. Unlike the EVM chains' Otterscan (a separate
   container per chain, EVM-only), devnet serves its explorer itself, so there's
   no extra container or published port — every `up` is browsable for both stacks.
+- **Starknet forking** — the `fork_url`/`fork_block` fields now work on Starknet
+  chains too, booting them as a fork of a live network via starknet-devnet's
+  `--fork-network`, so you can test against real Starknet contracts, classes, and
+  balances locally. `${VAR}` expansion and URL redaction are shared with the EVM
+  path; a forked chain mirrors live state, so it skips the baked Cairo test
+  tokens. Reuses the same `wharfnet.toml` seam as the EVM `--fork-url`.
 - **Mainnet forking** — point a chain at a live RPC with `fork_url` (and optional
   `fork_block`) in `wharfnet.toml` and it boots as a fork of that network via
   Anvil's `--fork-url`, so you can test against real balances, contracts, and
