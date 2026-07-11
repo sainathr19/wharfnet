@@ -11,8 +11,11 @@ use std::process::Command;
 use crate::runtime::manifest::{ChainEntry, Manifest};
 use crate::runtime::orchestrator::{compose_path, manifest_path};
 
-/// Anvil listens here inside its container irrespective of the published host port.
+/// Anvil listens here inside its container irrespective of the published host
+/// port. Kept in step with the engine's listen port by the assertion below, so
+/// changing one without the other is a compile error rather than a silent break.
 pub const INTERNAL_RPC: &str = "http://127.0.0.1:8545";
+const _: () = assert!(crate::evm::engine::ANVIL_INTERNAL_PORT == 8545);
 
 /// A handle to a running localnet: the parsed manifest plus how to drive its
 /// containers.
