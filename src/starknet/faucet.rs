@@ -15,8 +15,10 @@
 //! `add_invoke_transaction` — devnet's gas is nominal, so fixed generous bounds
 //! are simpler and more robust than trusting a localnet fee estimate.
 
+use std::time::Duration;
+
 use anyhow::{Context, Result, bail};
-use starknet_rust::accounts::{Account, ExecutionEncoding, SingleOwnerAccount};
+use starknet_rust::accounts::{Account, ConnectedAccount, ExecutionEncoding, SingleOwnerAccount};
 use starknet_rust::core::types::{BlockId, BlockTag, Call, Felt};
 use starknet_rust::core::utils::get_selector_from_name;
 use starknet_rust::providers::jsonrpc::HttpTransport;
@@ -37,6 +39,10 @@ const L2_GAS: u64 = 100_000_000;
 const L1_DATA_GAS: u64 = 1_000_000;
 const GAS_PRICE_FRI: u128 = 100_000_000_000; // 1e11, 100× devnet's 1e9
 
+/// The signing account for test-token mints — the first predeployed dev account,
+/// built once per funding run and reused across every token.
+type DevAccount = SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet>;
+
 /// Fund `address` on a single Starknet `chain`: mint the bundled tokens (or just
 /// `token` when set). Called by the faucet coordinator, which has already
 /// resolved this chain from the manifest.
@@ -47,43 +53,40 @@ pub fn fund_chain(
     token: Option<&str>,
 ) -> Result<()> {
     validate_address(address)?;
-    // One current-thread runtime drives every async invoke on this chain; the
-    // /mint cheat uses a plain blocking HTTP call and doesn't touch it.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("building the async runtime for Starknet invokes")?;
-
-    match token {
+    let tokens: Vec<&Token> = match token {
         // A single token was requested: fund just that one.
-        Some(symbol) => {
-            let token = find_token(chain, symbol)?;
-            fund_one(&rt, chain, address, amount, token)?;
-        }
+        Some(symbol) => vec![find_token(chain, symbol)?],
         // Default: every bundled token (ETH/STRK plus the Cairo test tokens).
-        None => {
-            for token in &chain.tokens {
-                fund_one(&rt, chain, address, amount, token)?;
+        None => chain.tokens.iter().collect(),
+    };
+
+    // The runtime and signing account are built once, lazily: only a Cairo-token
+    // mint needs them — the ETH/STRK cheat is a plain blocking HTTP call.
+    let mut ctx: Option<(tokio::runtime::Runtime, DevAccount)> = None;
+    for token in tokens {
+        match token.symbol.as_str() {
+            "ETH" => mint_native(chain, address, amount, token, "WEI")?,
+            "STRK" => mint_native(chain, address, amount, token, "FRI")?,
+            _ => {
+                if ctx.is_none() {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .context("building the async runtime for Starknet invokes")?;
+                    let account = rt.block_on(build_dev_account(chain))?;
+                    ctx = Some((rt, account));
+                }
+                let (rt, account) = ctx.as_ref().expect("ctx was just built");
+                let pb = ui::spinner(format!(
+                    "{}: minting {amount} {}…",
+                    chain.name, token.symbol
+                ));
+                let result = rt.block_on(mint_with_account(account, address, amount, token));
+                finish(&pb, chain, token.symbol.as_str(), amount, address, result)?;
             }
         }
     }
     Ok(())
-}
-
-/// Route one token to the right mechanism: the fee tokens go through devnet's
-/// mint cheat, everything else through a signed `mint` invoke.
-fn fund_one(
-    rt: &tokio::runtime::Runtime,
-    chain: &ChainEntry,
-    address: &str,
-    amount: u64,
-    token: &Token,
-) -> Result<()> {
-    match token.symbol.as_str() {
-        "ETH" => mint_native(chain, address, amount, token, "WEI"),
-        "STRK" => mint_native(chain, address, amount, token, "FRI"),
-        _ => mint_token(rt, chain, address, amount, token),
-    }
 }
 
 /// Mint `amount` whole coins of a fee token via devnet's `devnet_mint` JSON-RPC
@@ -114,32 +117,10 @@ fn mint_native(
     finish(&pb, chain, token.symbol.as_str(), amount, address, result)
 }
 
-/// Mint `amount` whole tokens (scaled by the token's decimals) by invoking the
-/// baked test token's public `mint(recipient, u256)`, signed by the first dev
-/// account purely to pay gas.
-fn mint_token(
-    rt: &tokio::runtime::Runtime,
-    chain: &ChainEntry,
-    address: &str,
-    amount: u64,
-    token: &Token,
-) -> Result<()> {
-    let pb = ui::spinner(format!(
-        "{}: minting {amount} {}…",
-        chain.name, token.symbol
-    ));
-    let result = rt.block_on(mint_token_invoke(chain, address, amount, token));
-    finish(&pb, chain, token.symbol.as_str(), amount, address, result)
-}
-
-/// The async body of a test-token mint: build a single-owner account for the dev
-/// signer and submit the `mint` invoke with fixed resource bounds.
-async fn mint_token_invoke(
-    chain: &ChainEntry,
-    address: &str,
-    amount: u64,
-    token: &Token,
-) -> Result<()> {
+/// Build the dev signing account once per funding run: parse the RPC, load the
+/// first predeployed dev account's key, and fetch the chain id. Reused across
+/// every test-token mint so those steps aren't repeated per token.
+async fn build_dev_account(chain: &ChainEntry) -> Result<DevAccount> {
     let rpc = Url::parse(&chain.rpc).with_context(|| format!("invalid rpc url '{}'", chain.rpc))?;
     let provider = JsonRpcClient::new(HttpTransport::new(rpc));
 
@@ -161,7 +142,18 @@ async fn mint_token_invoke(
     // default), so back-to-back mints in one funding run see each other's nonce
     // without racing — no need for the pending tag.
     account.set_block_id(BlockId::Tag(BlockTag::Latest));
+    Ok(account)
+}
 
+/// Mint `amount` whole tokens (scaled by the token's decimals) by invoking the
+/// baked test token's public `mint(recipient, u256)` through the shared dev
+/// `account`, which just pays gas — `mint` is public, so the recipient needs no key.
+async fn mint_with_account(
+    account: &DevAccount,
+    address: &str,
+    amount: u64,
+    token: &Token,
+) -> Result<()> {
     let recipient = Felt::from_hex(address).context("recipient is not a felt")?;
     let to = Felt::from_hex(&token.address)
         .with_context(|| format!("token address '{}' is not a felt", token.address))?;
@@ -173,7 +165,7 @@ async fn mint_token_invoke(
         calldata: vec![recipient, Felt::from(raw), Felt::ZERO],
     };
 
-    account
+    let tx_hash = account
         .execute_v3(vec![call])
         .l1_gas(L1_GAS)
         .l1_gas_price(GAS_PRICE_FRI)
@@ -183,8 +175,27 @@ async fn mint_token_invoke(
         .l1_data_gas_price(GAS_PRICE_FRI)
         .send()
         .await
-        .map(|_| ())
-        .with_context(|| format!("submitting the {} mint invoke", token.symbol))
+        .with_context(|| format!("submitting the {} mint invoke", token.symbol))?
+        .transaction_hash;
+
+    // `send` returns once the tx is accepted, not once it executes — and a
+    // reverted tx is still accepted. devnet mines a block per tx, so the receipt
+    // lands almost immediately; poll briefly, then confirm the mint didn't revert.
+    let provider = account.provider();
+    let mut receipt = None;
+    for _ in 0..20 {
+        if let Ok(r) = provider.get_transaction_receipt(tx_hash).await {
+            receipt = Some(r);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let receipt =
+        receipt.with_context(|| format!("the {} mint receipt never landed", token.symbol))?;
+    if let Some(reason) = receipt.receipt.execution_result().revert_reason() {
+        bail!("the {} mint reverted: {reason}", token.symbol);
+    }
+    Ok(())
 }
 
 /// Finish a per-token spinner uniformly for both funding paths.

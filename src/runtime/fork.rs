@@ -13,6 +13,8 @@ pub fn redact_url(url: &str) -> String {
     match url.split_once("://") {
         Some((scheme, rest)) => {
             let host = rest.split(['/', '?']).next().unwrap_or(rest);
+            // Drop any `user:pass@` userinfo so a key passed that way is redacted too.
+            let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
             format!("{scheme}://{host}")
         }
         None => url.split(['/', '?']).next().unwrap_or(url).to_string(),
@@ -42,6 +44,15 @@ mod tests {
         );
         assert_eq!(redact_url("http://localhost:8545"), "http://localhost:8545");
         assert_eq!(redact_url("weird?q=1"), "weird");
+        // Credentials in the userinfo are dropped, port is kept.
+        assert_eq!(
+            redact_url("https://user:KEY@rpc.example.com/v2/path"),
+            "https://rpc.example.com"
+        );
+        assert_eq!(
+            redact_url("https://KEY@node.example.com:8545"),
+            "https://node.example.com:8545"
+        );
     }
 
     #[test]

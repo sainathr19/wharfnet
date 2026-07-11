@@ -134,10 +134,17 @@ fn fund_token(
 
 fn eth_balance_wei(session: &Session, chain: &ChainEntry, address: &str) -> Result<u128> {
     let out = session.cast(chain, &["balance", address, "--rpc-url", INTERNAL_RPC])?;
-    let trimmed = out.trim();
-    trimmed
+    leading_u128(&out)
+}
+
+/// The leading decimal integer from `cast` output, ignoring any trailing
+/// `[1e6]`-style annotation newer `cast` versions append.
+fn leading_u128(out: &str) -> Result<u128> {
+    out.split_whitespace()
+        .next()
+        .unwrap_or("")
         .parse::<u128>()
-        .with_context(|| format!("parsing balance '{trimmed}'"))
+        .with_context(|| format!("parsing balance '{}'", out.trim()))
 }
 
 fn find_token<'a>(chain: &'a ChainEntry, symbol: &str) -> Result<&'a Token> {
@@ -209,14 +216,15 @@ mod tests {
 
     use crate::testkit::{Localnet, docker_available};
 
-    /// Leading decimal integer from `cast` output, ignoring any trailing
-    /// `[1e6]`-style annotation newer `cast` versions append.
     fn parse_uint(out: &str) -> u128 {
-        out.split_whitespace()
-            .next()
-            .expect("cast produced output")
-            .parse()
-            .expect("cast output is a decimal integer")
+        super::leading_u128(out).expect("cast output is a decimal integer")
+    }
+
+    #[test]
+    fn leading_u128_ignores_trailing_annotation() {
+        assert_eq!(super::leading_u128("1000000").unwrap(), 1_000_000);
+        assert_eq!(super::leading_u128("1000000 [1e6]\n").unwrap(), 1_000_000);
+        assert!(super::leading_u128("not-a-number").is_err());
     }
 
     fn eth_wei(session: &Session, chain: &ChainEntry, addr: &str) -> u128 {

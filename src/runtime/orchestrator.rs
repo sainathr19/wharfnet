@@ -6,6 +6,7 @@
 //! isolated temp dir in tests.
 
 use anyhow::{Result, bail};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -151,6 +152,28 @@ fn explorer_services(engines: &[Box<dyn Engine>]) -> Vec<ExplorerService> {
     services
 }
 
+/// Ensure no two published host ports collide across chains and their explorers.
+/// `config::validate` already rejects chain-vs-chain clashes, but explorer ports
+/// are assigned separately from `EXPLORER_BASE_PORT`, so a chain configured in
+/// that range would otherwise surface only as a cryptic docker bind failure.
+fn check_ports(engines: &[Box<dyn Engine>], explorers: &[ExplorerService]) -> Result<()> {
+    let mut seen = HashSet::new();
+    let ports = engines.iter().map(|e| (e.host_port(), e.name())).chain(
+        explorers
+            .iter()
+            .map(|s| (s.host_port, s.service_name.clone())),
+    );
+    for (port, owner) in ports {
+        if !seen.insert(port) {
+            bail!(
+                "host port {port} is used by more than one service ('{owner}') — \
+                 pick a different chain port, clear of the explorer range from {EXPLORER_BASE_PORT}"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn render_explorer_service(svc: &ExplorerService) -> String {
     OTTERSCAN_SERVICE_TEMPLATE
         .replace("{{NAME}}", &svc.service_name)
@@ -249,6 +272,7 @@ pub fn print_compose(explorer: bool, config_path: Option<&Path>) -> Result<()> {
     } else {
         Vec::new()
     };
+    check_ports(&engines, &explorers)?;
     print!(
         "{}",
         render_compose(&engines, StateMode::Ephemeral, &explorers)
@@ -289,6 +313,7 @@ pub(crate) fn up_in(
     } else {
         Vec::new()
     };
+    check_ports(&engines, &explorers)?;
 
     if mode == UpMode::Reset {
         clear_sessions(base)?;
@@ -574,6 +599,32 @@ mod tests {
                 .config_json
                 .contains("\"erigonURL\": \"http://127.0.0.1:8546\"")
         );
+    }
+
+    #[test]
+    fn check_ports_rejects_a_chain_port_that_collides_with_an_explorer() {
+        // A chain published on the explorer base port clashes with its own
+        // explorer's assigned host port.
+        let config = Config {
+            chains: vec![config::ChainConfig {
+                name: "anvil-x".into(),
+                kind: "evm".into(),
+                port: EXPLORER_BASE_PORT,
+                chain_id: Some("31337".into()),
+                block_time: 1,
+                fork_url: None,
+                fork_block: None,
+            }],
+        };
+        let engines = engines_for(&config, true);
+        let explorers = explorer_services(&engines);
+        let err = check_ports(&engines, &explorers).unwrap_err();
+        assert!(err.to_string().contains("more than one service"), "{err}");
+
+        // The default topology assigns distinct ports, so it passes.
+        let ok = engines_for(&Config::default(), true);
+        let ok_explorers = explorer_services(&ok);
+        assert!(check_ports(&ok, &ok_explorers).is_ok());
     }
 
     #[test]

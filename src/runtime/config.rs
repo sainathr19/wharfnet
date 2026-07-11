@@ -219,6 +219,39 @@ fn validate(config: &Config) -> Result<()> {
     let mut ports = HashSet::new();
     let mut ids = HashSet::new();
     for c in &config.chains {
+        // The name becomes a compose service key, container name, and file path,
+        // so restrict it to a safe, compose-friendly charset.
+        if c.name.is_empty()
+            || !c
+                .name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+        {
+            bail!(
+                "chain '{}': name must be non-empty and use only letters, digits, '.', '_', or '-'",
+                c.name
+            );
+        }
+        // The fork URL is interpolated verbatim into the compose command; reject
+        // anything that would break the surrounding JSON array (or an empty value
+        // left by a `${VAR}` that expanded to nothing).
+        if let Some(url) = &c.fork_url {
+            if url.is_empty() {
+                bail!(
+                    "chain '{}': fork_url is empty (did a ${{VAR}} expand to nothing?)",
+                    c.name
+                );
+            }
+            if url
+                .chars()
+                .any(|ch| ch == '"' || ch == '\\' || ch.is_whitespace())
+            {
+                bail!(
+                    "chain '{}': fork_url contains characters not allowed in a URL",
+                    c.name
+                );
+            }
+        }
         match c.kind.as_str() {
             "evm" => {
                 // Anvil needs a numeric chain id, so require one and check it parses.
@@ -342,6 +375,39 @@ mod tests {
         // kind + block_time defaulted.
         assert_eq!(c.chains[0].kind, "evm");
         assert_eq!(c.chains[0].block_time, 1);
+    }
+
+    #[test]
+    fn rejects_a_chain_name_with_unsafe_characters() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            "[[chains]]\nname = \"anvil 1\"\nport = 8545\nchain_id = 31337\n",
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(err.to_string().contains("name must be"), "{err}");
+    }
+
+    #[test]
+    fn rejects_a_fork_url_with_a_quote() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            "[[chains]]\nname = \"anvil-1\"\nport = 8545\nchain_id = 31337\nfork_url = \"https://rpc.example.com/\\\"evil\"\n",
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(err.to_string().contains("not allowed in a URL"), "{err}");
+    }
+
+    #[test]
+    fn rejects_an_empty_fork_url() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            "[[chains]]\nname = \"anvil-1\"\nport = 8545\nchain_id = 31337\nfork_url = \"\"\n",
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(err.to_string().contains("is empty"), "{err}");
     }
 
     #[test]

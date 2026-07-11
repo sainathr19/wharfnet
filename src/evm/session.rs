@@ -11,8 +11,11 @@ use std::process::Command;
 use crate::runtime::manifest::{ChainEntry, Manifest};
 use crate::runtime::orchestrator::{compose_path, manifest_path};
 
-/// Anvil listens here inside its container irrespective of the published host port.
+/// Anvil listens here inside its container irrespective of the published host
+/// port. Kept in step with the engine's listen port by the assertion below, so
+/// changing one without the other is a compile error rather than a silent break.
 pub const INTERNAL_RPC: &str = "http://127.0.0.1:8545";
+const _: () = assert!(crate::evm::engine::ANVIL_INTERNAL_PORT == 8545);
 
 /// A handle to a running localnet: the parsed manifest plus how to drive its
 /// containers.
@@ -39,23 +42,7 @@ impl Session {
 
     /// Chains matching `selector` — a kind (`evm`) or a specific name (`anvil-1`).
     pub fn targets(&self, selector: &str) -> Result<Vec<&ChainEntry>> {
-        let targets: Vec<&ChainEntry> = self
-            .manifest
-            .chains
-            .iter()
-            .filter(|c| c.name == selector || c.kind == selector)
-            .collect();
-        if targets.is_empty() {
-            let available = self
-                .manifest
-                .chains
-                .iter()
-                .map(|c| format!("{} ({})", c.name, c.kind))
-                .collect::<Vec<_>>()
-                .join(", ");
-            bail!("no chain matching '{selector}'. Available: {available}");
-        }
-        Ok(targets)
+        self.manifest.select(selector)
     }
 
     /// Run `cast <args>` inside the chain's container and return its stdout.

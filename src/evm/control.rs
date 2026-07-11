@@ -81,8 +81,9 @@ pub fn warp(selector: &str, timestamp: u64) -> Result<()> {
 
 fn warp_in(base: &Path, project: &str, selector: &str, timestamp: u64) -> Result<()> {
     for_each_target(base, project, selector, |s, c| {
-        s.cast_rpc(c, "evm_setNextBlockTimestamp", &[&timestamp.to_string()])?;
-        s.cast_rpc(c, "evm_mine", &[])?;
+        // Mine the block at the target timestamp in a single call, so the
+        // interval miner can't slip a block between setting the time and mining.
+        s.cast_rpc(c, "evm_mine", &[&format!("{{\"timestamp\":{timestamp}}}")])?;
         println!(
             "  {}: warped to timestamp {}",
             c.name,

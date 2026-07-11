@@ -7,8 +7,9 @@
 use crate::runtime::engine::{Engine, ExplorerTarget, HealthProbe, StagedFile, StateMode};
 use crate::runtime::manifest::{Account, ChainEntry, Contract, Token};
 
-/// Internal port the engine listens on inside its container.
-const ANVIL_INTERNAL_PORT: u16 = 8545;
+/// Internal port the engine listens on inside its container. The `INTERNAL_RPC`
+/// that control/faucet reach it on is checked against this (see `session.rs`).
+pub(crate) const ANVIL_INTERNAL_PORT: u16 = 8545;
 
 /// How often Anvil flushes its state to disk in persistent mode. A small
 /// interval keeps the on-disk session close to live so little is lost if the
