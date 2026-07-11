@@ -47,8 +47,17 @@ pub(crate) fn post(chain: &ChainEntry, body: &str) -> Result<String> {
         );
     }
     // JSON-RPC returns HTTP 200 even for method errors, so surface those too.
-    if response_body.contains("\"error\"") {
-        bail!("devnet rpc returned an error: {response_body}");
+    // Check for a top-level `error` member rather than grepping for the substring,
+    // which would false-positive on a result that legitimately contains "error"
+    // (e.g. a contract ABI with an `error` entry).
+    let parsed: Value = serde_json::from_str(response_body)
+        .with_context(|| format!("devnet returned invalid JSON: {response_body}"))?;
+    if let Some(err) = parsed.get("error") {
+        let message = err
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown error");
+        bail!("devnet rpc returned an error: {message}");
     }
     Ok(response_body.to_string())
 }
