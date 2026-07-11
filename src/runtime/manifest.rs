@@ -76,8 +76,14 @@ impl Manifest {
 
     pub fn write(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)
-            .with_context(|| format!("writing manifest to {}", path.display()))?;
+        // Write to a sibling temp file then rename, so a concurrent reader (e.g.
+        // `status`) or a crash mid-write never sees a truncated manifest — the
+        // rename is atomic on the same filesystem.
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)
+            .with_context(|| format!("writing manifest to {}", tmp.display()))?;
+        std::fs::rename(&tmp, path)
+            .with_context(|| format!("finalizing manifest at {}", path.display()))?;
         Ok(())
     }
 
