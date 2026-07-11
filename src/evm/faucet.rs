@@ -10,21 +10,25 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use super::session::{self as evm, INTERNAL_RPC, Session};
+use crate::runtime::amount::to_base_units;
 use crate::runtime::manifest::{ChainEntry, Token};
 use crate::runtime::ui;
 
-const WEI_PER_ETH: u128 = 1_000_000_000_000_000_000;
+/// Decimals of the native coin (ETH), so a decimal `amount` scales to wei.
+const NATIVE_DECIMALS: u32 = 18;
 
 /// Fund `address` on a single EVM `chain`: top up native ETH and mint the
 /// bundled tokens (or just `token` when set). Called by the faucet coordinator,
-/// which has already resolved this chain from the manifest.
+/// which has already resolved this chain from the manifest. `amount` is a decimal
+/// number of whole units unless `raw`, in which case it's exact base units.
 pub fn fund_chain(
     base: &Path,
     project: &str,
     chain: &ChainEntry,
     address: &str,
-    amount: u64,
+    amount: &str,
     token: Option<&str>,
+    raw: bool,
 ) -> Result<()> {
     let session = Session::open(base, project)?;
     evm::validate_address(address)?;
@@ -33,13 +37,13 @@ pub fn fund_chain(
         // A single token was requested: fund just that one.
         Some(symbol) => {
             let token = find_token(chain, symbol)?;
-            fund_token(&session, chain, address, amount, token)?;
+            fund_token(&session, chain, address, amount, raw, token)?;
         }
         // Default: native coin plus every bundled token.
         None => {
-            fund_eth(&session, chain, address, amount)?;
+            fund_eth(&session, chain, address, amount, raw)?;
             for token in &chain.tokens {
-                fund_token(&session, chain, address, amount, token)?;
+                fund_token(&session, chain, address, amount, raw, token)?;
             }
         }
     }
@@ -48,13 +52,17 @@ pub fn fund_chain(
 
 /// Top up native ETH additively via `anvil_setBalance` (read current, add,
 /// set) so an existing balance is never clobbered and no dev account is drained.
-fn fund_eth(session: &Session, chain: &ChainEntry, address: &str, amount: u64) -> Result<()> {
+fn fund_eth(
+    session: &Session,
+    chain: &ChainEntry,
+    address: &str,
+    amount: &str,
+    raw: bool,
+) -> Result<()> {
     let pb = ui::spinner(format!("{}: funding {amount} ETH…", chain.name));
     let result = (|| -> Result<()> {
         let current = eth_balance_wei(session, chain, address)?;
-        let add = (amount as u128)
-            .checked_mul(WEI_PER_ETH)
-            .context("ETH amount too large")?;
+        let add = to_base_units(amount, NATIVE_DECIMALS, raw)?;
         let new = current.checked_add(add).context("ETH balance overflow")?;
         session
             .cast_rpc(chain, "anvil_setBalance", &[address, &format!("0x{new:x}")])
@@ -80,7 +88,8 @@ fn fund_token(
     session: &Session,
     chain: &ChainEntry,
     address: &str,
-    amount: u64,
+    amount: &str,
+    raw: bool,
     token: &Token,
 ) -> Result<()> {
     let pb = ui::spinner(format!(
@@ -88,13 +97,7 @@ fn fund_token(
         chain.name, token.symbol
     ));
     let result = (|| -> Result<()> {
-        let raw = (amount as u128)
-            .checked_mul(
-                10u128
-                    .checked_pow(token.decimals as u32)
-                    .context("bad decimals")?,
-            )
-            .context("token amount too large")?;
+        let base_units = to_base_units(amount, token.decimals as u32, raw)?;
         let signer = chain
             .accounts
             .first()
@@ -107,7 +110,7 @@ fn fund_token(
                     &token.address,
                     "mint(address,uint256)",
                     address,
-                    &raw.to_string(),
+                    &base_units.to_string(),
                     "--rpc-url",
                     INTERNAL_RPC,
                     "--private-key",
@@ -216,6 +219,8 @@ mod tests {
 
     use crate::testkit::{Localnet, docker_available};
 
+    const WEI_PER_ETH: u128 = 1_000_000_000_000_000_000;
+
     fn parse_uint(out: &str) -> u128 {
         super::leading_u128(out).expect("cast output is a decimal integer")
     }
@@ -276,8 +281,16 @@ mod tests {
 
         // 1) Fund native ETH + every bundled token in one shot. Success alone
         //    proves all five mints (incl. the weird tokens) land without reverting.
-        crate::faucet::run_in(net.base(), net.project(), net.chain(), recipient, 100, None)
-            .expect("funding native + all tokens should succeed");
+        crate::faucet::run_in(
+            net.base(),
+            net.project(),
+            net.chain(),
+            recipient,
+            "100",
+            None,
+            false,
+        )
+        .expect("funding native + all tokens should succeed");
         assert_eq!(eth_wei(&session, chain, recipient), 100 * WEI_PER_ETH);
         assert_eq!(
             token_balance(&session, chain, &usdc, recipient),
@@ -290,8 +303,9 @@ mod tests {
             net.project(),
             net.chain(),
             recipient,
-            50,
+            "50",
             Some("USDC"),
+            false,
         )
         .expect("single-token funding should succeed");
         assert_eq!(
@@ -301,12 +315,48 @@ mod tests {
         assert_eq!(eth_wei(&session, chain, recipient), 100 * WEI_PER_ETH);
 
         // 3) A second full fund is additive — ETH tops up, USDC accrues again.
-        crate::faucet::run_in(net.base(), net.project(), net.chain(), recipient, 25, None)
-            .expect("second full funding should succeed");
+        crate::faucet::run_in(
+            net.base(),
+            net.project(),
+            net.chain(),
+            recipient,
+            "25",
+            None,
+            false,
+        )
+        .expect("second full funding should succeed");
         assert_eq!(eth_wei(&session, chain, recipient), 125 * WEI_PER_ETH);
         assert_eq!(
             token_balance(&session, chain, &usdc, recipient),
             175_000_000
+        );
+
+        // 4) A fractional amount scales by decimals (0.5 USDC @ 6dp = 500_000),
+        //    and a --raw amount is taken as exact base units.
+        crate::faucet::run_in(
+            net.base(),
+            net.project(),
+            net.chain(),
+            recipient,
+            "0.5",
+            Some("USDC"),
+            false,
+        )
+        .expect("fractional funding should succeed");
+        crate::faucet::run_in(
+            net.base(),
+            net.project(),
+            net.chain(),
+            recipient,
+            "1",
+            Some("USDC"),
+            true,
+        )
+        .expect("raw funding should succeed");
+        // 175_000_000 + 500_000 (0.5) + 1 (raw base unit) = 175_500_001
+        assert_eq!(
+            token_balance(&session, chain, &usdc, recipient),
+            175_500_001
         );
     }
 }

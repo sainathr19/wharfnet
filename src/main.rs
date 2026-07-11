@@ -72,14 +72,17 @@ enum Commands {
         chain: String,
         /// Recipient address.
         address: String,
-        /// Amount in whole units (native coin, or whole tokens scaled by their
-        /// decimals).
-        #[arg(default_value_t = 100)]
-        amount: u64,
+        /// Amount to fund: a decimal number of whole units (e.g. `1.5`), scaled
+        /// by the token's decimals. With `--raw`, an exact base-unit integer.
+        #[arg(default_value = "100")]
+        amount: String,
         /// Fund only this token (e.g. `USDC`). Omit to fund the native coin(s)
         /// and every bundled token.
         #[arg(long)]
         token: Option<String>,
+        /// Treat `amount` as raw base units (wei/fri, or a token's smallest unit).
+        #[arg(long)]
+        raw: bool,
     },
     /// EVM chain controls: mine, advance time, impersonate, snapshot/revert.
     Evm {
@@ -225,7 +228,8 @@ fn run(command: Commands) -> anyhow::Result<()> {
             address,
             amount,
             token,
-        } => faucet::run(&chain, &address, amount, token.as_deref()),
+            raw,
+        } => faucet::run(&chain, &address, &amount, token.as_deref(), raw),
         Commands::Evm { command } => match command {
             EvmCommands::Mine { count, chain } => control::mine(&chain, count),
             EvmCommands::IncreaseTime { seconds, chain } => control::increase_time(&chain, seconds),
@@ -330,11 +334,13 @@ mod tests {
                 address,
                 amount,
                 token,
+                raw,
             } => {
                 assert_eq!(chain, "evm");
                 assert_eq!(address, "0xabc");
-                assert_eq!(amount, 500);
+                assert_eq!(amount, "500");
                 assert_eq!(token, None);
+                assert!(!raw);
             }
             _ => panic!("expected faucet command"),
         }
@@ -354,7 +360,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(chain, "anvil-1");
-                assert_eq!(amount, 50);
+                assert_eq!(amount, "50");
                 assert_eq!(token.as_deref(), Some("USDC"));
             }
             _ => panic!("expected faucet command"),
@@ -365,7 +371,20 @@ mod tests {
     fn faucet_amount_defaults_to_100() {
         let cli = Cli::try_parse_from(["wharfnet", "faucet", "evm", "0xabc"]).unwrap();
         match cli.command {
-            Commands::Faucet { amount, .. } => assert_eq!(amount, 100),
+            Commands::Faucet { amount, .. } => assert_eq!(amount, "100"),
+            _ => panic!("expected faucet command"),
+        }
+    }
+
+    #[test]
+    fn parses_faucet_raw_and_decimal_amount() {
+        let cli =
+            Cli::try_parse_from(["wharfnet", "faucet", "evm", "0xabc", "1.5", "--raw"]).unwrap();
+        match cli.command {
+            Commands::Faucet { amount, raw, .. } => {
+                assert_eq!(amount, "1.5");
+                assert!(raw);
+            }
             _ => panic!("expected faucet command"),
         }
     }
