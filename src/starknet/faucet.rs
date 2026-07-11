@@ -26,6 +26,7 @@ use starknet_rust::providers::{JsonRpcClient, Provider, Url};
 use starknet_rust::signers::{LocalWallet, SigningKey};
 
 use super::devnet;
+use crate::runtime::amount::to_base_units;
 use crate::runtime::manifest::{ChainEntry, Token};
 use crate::runtime::ui;
 
@@ -49,8 +50,9 @@ type DevAccount = SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet>;
 pub fn fund_chain(
     chain: &ChainEntry,
     address: &str,
-    amount: u64,
+    amount: &str,
     token: Option<&str>,
+    raw: bool,
 ) -> Result<()> {
     validate_address(address)?;
     let tokens: Vec<&Token> = match token {
@@ -65,8 +67,8 @@ pub fn fund_chain(
     let mut ctx: Option<(tokio::runtime::Runtime, DevAccount)> = None;
     for token in tokens {
         match token.symbol.as_str() {
-            "ETH" => mint_native(chain, address, amount, token, "WEI")?,
-            "STRK" => mint_native(chain, address, amount, token, "FRI")?,
+            "ETH" => mint_native(chain, address, amount, raw, token, "WEI")?,
+            "STRK" => mint_native(chain, address, amount, raw, token, "FRI")?,
             _ => {
                 if ctx.is_none() {
                     let rt = tokio::runtime::Builder::new_current_thread()
@@ -81,7 +83,7 @@ pub fn fund_chain(
                     "{}: minting {amount} {}…",
                     chain.name, token.symbol
                 ));
-                let result = rt.block_on(mint_with_account(account, address, amount, token));
+                let result = rt.block_on(mint_with_account(account, address, amount, raw, token));
                 finish(&pb, chain, token.symbol.as_str(), amount, address, result)?;
             }
         }
@@ -95,7 +97,8 @@ pub fn fund_chain(
 fn mint_native(
     chain: &ChainEntry,
     address: &str,
-    amount: u64,
+    amount: &str,
+    raw: bool,
     token: &Token,
     unit: &str,
 ) -> Result<()> {
@@ -104,9 +107,9 @@ fn mint_native(
         chain.name, token.symbol
     ));
     let result = (|| -> Result<()> {
-        let raw = scaled_amount(amount, token.decimals)?;
+        let base_units = to_base_units(amount, token.decimals as u32, raw)?;
         let body = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"devnet_mint","params":{{"address":"{address}","amount":{raw},"unit":"{unit}"}}}}"#
+            r#"{{"jsonrpc":"2.0","id":1,"method":"devnet_mint","params":{{"address":"{address}","amount":{base_units},"unit":"{unit}"}}}}"#
         );
         let resp = devnet::post(chain, &body)?;
         if !resp.contains("new_balance") {
@@ -151,18 +154,19 @@ async fn build_dev_account(chain: &ChainEntry) -> Result<DevAccount> {
 async fn mint_with_account(
     account: &DevAccount,
     address: &str,
-    amount: u64,
+    amount: &str,
+    raw: bool,
     token: &Token,
 ) -> Result<()> {
     let recipient = Felt::from_hex(address).context("recipient is not a felt")?;
     let to = Felt::from_hex(&token.address)
         .with_context(|| format!("token address '{}' is not a felt", token.address))?;
-    let raw = scaled_amount(amount, token.decimals)?;
+    let base_units = to_base_units(amount, token.decimals as u32, raw)?;
     let call = Call {
         to,
         selector: get_selector_from_name("mint").expect("`mint` is a valid entrypoint name"),
-        // u256 is passed as two felts (low, high); `raw` is a u128 so `high` is 0.
-        calldata: vec![recipient, Felt::from(raw), Felt::ZERO],
+        // u256 is passed as two felts (low, high); the amount is a u128 so `high` is 0.
+        calldata: vec![recipient, Felt::from(base_units), Felt::ZERO],
     };
 
     let tx_hash = account
@@ -203,7 +207,7 @@ fn finish(
     pb: &indicatif::ProgressBar,
     chain: &ChainEntry,
     symbol: &str,
-    amount: u64,
+    amount: &str,
     address: &str,
     result: Result<()>,
 ) -> Result<()> {
@@ -220,17 +224,6 @@ fn finish(
             Err(e)
         }
     }
-}
-
-/// `amount` whole units scaled to base units by the token's decimals.
-fn scaled_amount(amount: u64, decimals: u8) -> Result<u128> {
-    (amount as u128)
-        .checked_mul(
-            10u128
-                .checked_pow(decimals as u32)
-                .context("token has too many decimals")?,
-        )
-        .context("token amount too large")
 }
 
 /// Validate a Starknet address: `0x` + 1..=64 hex chars (felts are ≤ 252 bits).
@@ -319,13 +312,6 @@ mod tests {
         assert!(validate_address("1234").is_err()); // no 0x
         assert!(validate_address("0xghij").is_err()); // non-hex
         assert!(validate_address(&format!("0x{}", "1".repeat(65))).is_err()); // too long
-    }
-
-    #[test]
-    fn scaled_amount_scales_by_decimals() {
-        assert_eq!(scaled_amount(100, 6).unwrap(), 100_000_000);
-        assert_eq!(scaled_amount(1, 18).unwrap(), 1_000_000_000_000_000_000);
-        assert_eq!(scaled_amount(0, 8).unwrap(), 0);
     }
 
     #[test]
@@ -428,8 +414,16 @@ mod tests {
 
         // 1) Default fund: native ETH+STRK via the mint cheat, USDC/WBTC/FEE/REB
         //    via signed invokes — one shot. Success alone proves the invoke path.
-        crate::faucet::run_in(net.base(), net.project(), net.chain(), RECIPIENT, 5, None)
-            .expect("funding native + all tokens should succeed");
+        crate::faucet::run_in(
+            net.base(),
+            net.project(),
+            net.chain(),
+            RECIPIENT,
+            "5",
+            None,
+            false,
+        )
+        .expect("funding native + all tokens should succeed");
         assert_eq!(
             native_balance(SN_FAUCET_PORT, RECIPIENT, "WEI"),
             5 * ONE_E18
@@ -449,8 +443,9 @@ mod tests {
             net.project(),
             net.chain(),
             RECIPIENT,
-            3,
+            "3",
             Some("USDC"),
+            false,
         )
         .expect("single-token funding should succeed");
         assert_eq!(erc20_balance(&rpc, &addr("USDC"), RECIPIENT), 8_000_000); // 5 + 3 @ 6dp
@@ -460,8 +455,16 @@ mod tests {
         );
 
         // 3) A second full fund is additive across every token.
-        crate::faucet::run_in(net.base(), net.project(), net.chain(), RECIPIENT, 2, None)
-            .expect("second full funding should succeed");
+        crate::faucet::run_in(
+            net.base(),
+            net.project(),
+            net.chain(),
+            RECIPIENT,
+            "2",
+            None,
+            false,
+        )
+        .expect("second full funding should succeed");
         assert_eq!(
             native_balance(SN_FAUCET_PORT, RECIPIENT, "WEI"),
             7 * ONE_E18
@@ -515,7 +518,7 @@ mod tests {
         //    tokens, then mint USDC — the invoke lands in the session replay.
         orchestrator::up_in(base, project, UpMode::Resume, false, Some(&config))
             .expect("first up --resume should boot");
-        crate::faucet::run_in(base, project, chain, RECIPIENT, 7, Some("USDC"))
+        crate::faucet::run_in(base, project, chain, RECIPIENT, "7", Some("USDC"), false)
             .expect("minting USDC should succeed");
         assert_eq!(erc20_balance(&rpc, usdc, RECIPIENT), 7_000_000);
 

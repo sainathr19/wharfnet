@@ -298,6 +298,15 @@ pub fn status() -> Result<()> {
     status_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT)
 }
 
+pub fn logs(selector: Option<&str>, follow: bool) -> Result<()> {
+    logs_in(
+        Path::new(DEFAULT_STATE_DIR),
+        DEFAULT_PROJECT,
+        selector,
+        follow,
+    )
+}
+
 pub(crate) fn up_in(
     base: &Path,
     project: &str,
@@ -354,22 +363,37 @@ pub(crate) fn up_in(
     }
     ui::finish_ok(&pb, "containers started");
 
-    for engine in &engines {
-        let pb = ui::spinner(format!(
-            "waiting for {} (:{})…",
-            engine.name(),
-            engine.host_port()
-        ));
-        if wait_ready(engine.host_port(), &engine.health_probe(), READY_TIMEOUT) {
-            ui::finish_ok(&pb, format!("{} ready", engine.name()));
-        } else {
-            ui::finish_err(&pb, format!("{} timed out", engine.name()));
-            bail!(
-                "{} did not become ready within {}s",
-                engine.name(),
-                READY_TIMEOUT.as_secs()
-            );
+    // Probe every chain concurrently — each waits on its own thread, so the total
+    // boot wait is the slowest chain, not the sum. Bail listing any that time out.
+    let pb = ui::spinner(format!(
+        "waiting for {} chain(s) to become ready…",
+        engines.len()
+    ));
+    let handles: Vec<_> = engines
+        .iter()
+        .map(|engine| {
+            let name = engine.name();
+            let port = engine.host_port();
+            let probe = engine.health_probe();
+            std::thread::spawn(move || (name, wait_ready(port, &probe, READY_TIMEOUT)))
+        })
+        .collect();
+    let mut not_ready = Vec::new();
+    for handle in handles {
+        let (name, ready) = handle.join().expect("a readiness probe thread panicked");
+        if !ready {
+            not_ready.push(name);
         }
+    }
+    if not_ready.is_empty() {
+        ui::finish_ok(&pb, format!("all {} chain(s) ready", engines.len()));
+    } else {
+        ui::finish_err(&pb, format!("{} chain(s) timed out", not_ready.len()));
+        bail!(
+            "these chains did not become ready within {}s: {}",
+            READY_TIMEOUT.as_secs(),
+            not_ready.join(", ")
+        );
     }
 
     let mut entries: Vec<_> = engines.iter().map(|e| e.manifest_entry()).collect();
@@ -442,6 +466,34 @@ pub(crate) fn down_in(base: &Path, project: &str) -> Result<()> {
     ui::finish_ok(&pb, "localnet down");
     let _ = fs::remove_file(manifest_path(base));
     Ok(())
+}
+
+/// Stream container logs via `docker compose logs`. With no `selector`, shows
+/// every service; with one (a chain kind or a specific name) it filters to the
+/// matching chains' containers.
+pub(crate) fn logs_in(
+    base: &Path,
+    project: &str,
+    selector: Option<&str>,
+    follow: bool,
+) -> Result<()> {
+    let manifest_file = manifest_path(base);
+    if !manifest_file.exists() {
+        bail!("localnet is not running. Start it with `wharfnet up`.");
+    }
+    let file = compose_path(base);
+    match selector {
+        Some(sel) => {
+            let manifest = Manifest::read(&manifest_file)?;
+            let services: Vec<&str> = manifest
+                .select(sel)?
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect();
+            docker::compose_logs(&file, project, &services, follow)
+        }
+        None => docker::compose_logs(&file, project, &[], follow),
+    }
 }
 
 fn status_in(base: &Path, project: &str) -> Result<()> {
@@ -830,6 +882,26 @@ mod tests {
     fn down_in_is_noop_when_nothing_to_tear_down() {
         let dir = tempdir().unwrap();
         assert!(down_in(dir.path(), "wharfnet-test").is_ok());
+    }
+
+    #[test]
+    fn logs_in_errors_when_not_running() {
+        let dir = tempdir().unwrap();
+        let err = logs_in(dir.path(), "wharfnet-test", None, false).unwrap_err();
+        assert!(err.to_string().contains("not running"), "{err}");
+    }
+
+    /// Boots a chain and streams its logs (non-follow), for a selector and for
+    /// all services. Self-skips without Docker.
+    #[test]
+    fn logs_in_streams_a_running_chain() {
+        if !crate::testkit::docker_available() {
+            eprintln!("skipping logs test: docker unavailable");
+            return;
+        }
+        let net = crate::testkit::Localnet::boot("t-logs", 18547, 313390, 3600);
+        logs_in(net.base(), net.project(), Some(net.chain()), false).unwrap();
+        logs_in(net.base(), net.project(), None, false).unwrap();
     }
 
     // ---- health check, exercised against a one-shot mock TCP server ----

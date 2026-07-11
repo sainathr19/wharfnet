@@ -3,6 +3,7 @@
 //! the Docker wrapper, and terminal UI. Nothing in here is EVM-specific; the
 //! per-kind pieces live under `crate::evm` (and future `crate::solana`, …).
 
+pub mod amount;
 pub mod config;
 pub mod docker;
 pub mod engine;

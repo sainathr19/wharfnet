@@ -66,6 +66,27 @@ pub fn compose_down(file: &Path, project: &str) -> Result<()> {
     Ok(())
 }
 
+/// Stream (`docker compose logs`) the given `services`, or all of them when the
+/// slice is empty. Inherits stdio so logs go straight to the user's terminal;
+/// `follow` keeps the stream open like `tail -f`.
+pub fn compose_logs(file: &Path, project: &str, services: &[&str], follow: bool) -> Result<()> {
+    let mut cmd = Command::new("docker");
+    cmd.arg("compose")
+        .arg("-f")
+        .arg(file)
+        .arg("-p")
+        .arg(project)
+        .arg("logs");
+    if follow {
+        cmd.arg("--follow");
+    }
+    for service in services {
+        cmd.arg(service);
+    }
+    cmd.status().context("running `docker compose logs`")?;
+    Ok(())
+}
+
 pub fn compose_ps(file: &Path, project: &str) -> Result<()> {
     Command::new("docker")
         .arg("compose")

@@ -12,6 +12,17 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Faster multi-chain boot** — `up` now health-checks every chain concurrently
+  instead of one after another, so boot waits on the slowest chain rather than the
+  sum of them.
+- **Fractional & raw faucet amounts** — `faucet <chain> <address> <amount>` now
+  takes a decimal `amount` (e.g. `1.5`), scaled by the token's decimals, instead
+  of whole units only. Pass `--raw` to fund an exact base-unit integer (wei/fri,
+  or a token's smallest unit). Shared parsing across the EVM and Starknet funders.
+- **`logs` command** — `wharfnet logs [chain] [--follow]` streams container logs
+  through `docker compose logs`. With no argument it shows every service; pass a
+  chain kind (`evm`, `starknet`) or a specific name (`anvil-1`) to filter, and
+  `--follow`/`-f` to keep tailing.
 - **Starknet chains** — a `starknet-devnet` chain (`starknet-1`, `:5050`) now
   boots **by default** alongside the two Anvil chains, with deterministic
   predeployed accounts, the ETH/STRK fee tokens, and baked **Cairo test tokens**

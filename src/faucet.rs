@@ -15,7 +15,7 @@ use std::path::Path;
 use crate::runtime::manifest::Manifest;
 use crate::runtime::orchestrator::{DEFAULT_PROJECT, DEFAULT_STATE_DIR, manifest_path};
 
-pub fn run(chain: &str, address: &str, amount: u64, token: Option<&str>) -> Result<()> {
+pub fn run(chain: &str, address: &str, amount: &str, token: Option<&str>, raw: bool) -> Result<()> {
     run_in(
         Path::new(DEFAULT_STATE_DIR),
         DEFAULT_PROJECT,
@@ -23,6 +23,7 @@ pub fn run(chain: &str, address: &str, amount: u64, token: Option<&str>) -> Resu
         address,
         amount,
         token,
+        raw,
     )
 }
 
@@ -33,8 +34,9 @@ pub(crate) fn run_in(
     project: &str,
     selector: &str,
     address: &str,
-    amount: u64,
+    amount: &str,
     token: Option<&str>,
+    raw: bool,
 ) -> Result<()> {
     let manifest_file = manifest_path(base);
     if !manifest_file.exists() {
@@ -43,8 +45,10 @@ pub(crate) fn run_in(
     let manifest = Manifest::read(&manifest_file)?;
     for chain in manifest.select(selector)? {
         match chain.kind.as_str() {
-            "evm" => crate::evm::faucet::fund_chain(base, project, chain, address, amount, token)?,
-            "starknet" => crate::starknet::faucet::fund_chain(chain, address, amount, token)?,
+            "evm" => {
+                crate::evm::faucet::fund_chain(base, project, chain, address, amount, token, raw)?
+            }
+            "starknet" => crate::starknet::faucet::fund_chain(chain, address, amount, token, raw)?,
             other => bail!(
                 "faucet is not yet supported for {other} chains (chain '{}')",
                 chain.name
@@ -104,7 +108,7 @@ mod tests {
     #[test]
     fn errors_when_localnet_not_running() {
         let dir = tempdir().unwrap();
-        let err = run_in(dir.path(), "p", "evm", VALID_ADDR, 100, None).unwrap_err();
+        let err = run_in(dir.path(), "p", "evm", VALID_ADDR, "100", None, false).unwrap_err();
         assert!(err.to_string().contains("not running"), "{err}");
     }
 
@@ -112,7 +116,7 @@ mod tests {
     fn errors_when_no_chain_matches_selector() {
         let dir = tempdir().unwrap();
         write_manifest(dir.path(), vec![evm_chain()]);
-        let err = run_in(dir.path(), "p", "solana", VALID_ADDR, 100, None).unwrap_err();
+        let err = run_in(dir.path(), "p", "solana", VALID_ADDR, "100", None, false).unwrap_err();
         assert!(err.to_string().contains("no chain matching"), "{err}");
     }
 
@@ -124,7 +128,7 @@ mod tests {
         solana.kind = "solana".into();
         solana.tokens.clear();
         write_manifest(dir.path(), vec![solana]);
-        let err = run_in(dir.path(), "p", "solana", VALID_ADDR, 100, None).unwrap_err();
+        let err = run_in(dir.path(), "p", "solana", VALID_ADDR, "100", None, false).unwrap_err();
         assert!(err.to_string().contains("not yet supported"), "{err}");
     }
 
@@ -132,7 +136,7 @@ mod tests {
     fn errors_on_invalid_evm_address() {
         let dir = tempdir().unwrap();
         write_manifest(dir.path(), vec![evm_chain()]);
-        let err = run_in(dir.path(), "p", "evm", "0xnothex", 100, None).unwrap_err();
+        let err = run_in(dir.path(), "p", "evm", "0xnothex", "100", None, false).unwrap_err();
         assert!(err.to_string().contains("valid EVM address"), "{err}");
     }
 
@@ -140,7 +144,16 @@ mod tests {
     fn errors_on_unknown_token() {
         let dir = tempdir().unwrap();
         write_manifest(dir.path(), vec![evm_chain()]);
-        let err = run_in(dir.path(), "p", "evm", VALID_ADDR, 100, Some("DAI")).unwrap_err();
+        let err = run_in(
+            dir.path(),
+            "p",
+            "evm",
+            VALID_ADDR,
+            "100",
+            Some("DAI"),
+            false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("not deployed"), "{err}");
     }
 }
