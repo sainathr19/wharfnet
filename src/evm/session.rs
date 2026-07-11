@@ -39,23 +39,7 @@ impl Session {
 
     /// Chains matching `selector` — a kind (`evm`) or a specific name (`anvil-1`).
     pub fn targets(&self, selector: &str) -> Result<Vec<&ChainEntry>> {
-        let targets: Vec<&ChainEntry> = self
-            .manifest
-            .chains
-            .iter()
-            .filter(|c| c.name == selector || c.kind == selector)
-            .collect();
-        if targets.is_empty() {
-            let available = self
-                .manifest
-                .chains
-                .iter()
-                .map(|c| format!("{} ({})", c.name, c.kind))
-                .collect::<Vec<_>>()
-                .join(", ");
-            bail!("no chain matching '{selector}'. Available: {available}");
-        }
-        Ok(targets)
+        self.manifest.select(selector)
     }
 
     /// Run `cast <args>` inside the chain's container and return its stdout.
