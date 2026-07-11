@@ -12,6 +12,9 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Faster multi-chain boot** — `up` now health-checks every chain concurrently
+  instead of one after another, so boot waits on the slowest chain rather than the
+  sum of them.
 - **Fractional & raw faucet amounts** — `faucet <chain> <address> <amount>` now
   takes a decimal `amount` (e.g. `1.5`), scaled by the token's decimals, instead
   of whole units only. Pass `--raw` to fund an exact base-unit integer (wei/fri,

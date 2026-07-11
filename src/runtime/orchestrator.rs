@@ -363,22 +363,37 @@ pub(crate) fn up_in(
     }
     ui::finish_ok(&pb, "containers started");
 
-    for engine in &engines {
-        let pb = ui::spinner(format!(
-            "waiting for {} (:{})…",
-            engine.name(),
-            engine.host_port()
-        ));
-        if wait_ready(engine.host_port(), &engine.health_probe(), READY_TIMEOUT) {
-            ui::finish_ok(&pb, format!("{} ready", engine.name()));
-        } else {
-            ui::finish_err(&pb, format!("{} timed out", engine.name()));
-            bail!(
-                "{} did not become ready within {}s",
-                engine.name(),
-                READY_TIMEOUT.as_secs()
-            );
+    // Probe every chain concurrently — each waits on its own thread, so the total
+    // boot wait is the slowest chain, not the sum. Bail listing any that time out.
+    let pb = ui::spinner(format!(
+        "waiting for {} chain(s) to become ready…",
+        engines.len()
+    ));
+    let handles: Vec<_> = engines
+        .iter()
+        .map(|engine| {
+            let name = engine.name();
+            let port = engine.host_port();
+            let probe = engine.health_probe();
+            std::thread::spawn(move || (name, wait_ready(port, &probe, READY_TIMEOUT)))
+        })
+        .collect();
+    let mut not_ready = Vec::new();
+    for handle in handles {
+        let (name, ready) = handle.join().expect("a readiness probe thread panicked");
+        if !ready {
+            not_ready.push(name);
         }
+    }
+    if not_ready.is_empty() {
+        ui::finish_ok(&pb, format!("all {} chain(s) ready", engines.len()));
+    } else {
+        ui::finish_err(&pb, format!("{} chain(s) timed out", not_ready.len()));
+        bail!(
+            "these chains did not become ready within {}s: {}",
+            READY_TIMEOUT.as_secs(),
+            not_ready.join(", ")
+        );
     }
 
     let mut entries: Vec<_> = engines.iter().map(|e| e.manifest_entry()).collect();
