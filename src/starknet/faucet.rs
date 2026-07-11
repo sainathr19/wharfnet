@@ -15,8 +15,10 @@
 //! `add_invoke_transaction` — devnet's gas is nominal, so fixed generous bounds
 //! are simpler and more robust than trusting a localnet fee estimate.
 
+use std::time::Duration;
+
 use anyhow::{Context, Result, bail};
-use starknet_rust::accounts::{Account, ExecutionEncoding, SingleOwnerAccount};
+use starknet_rust::accounts::{Account, ConnectedAccount, ExecutionEncoding, SingleOwnerAccount};
 use starknet_rust::core::types::{BlockId, BlockTag, Call, Felt};
 use starknet_rust::core::utils::get_selector_from_name;
 use starknet_rust::providers::jsonrpc::HttpTransport;
@@ -173,7 +175,7 @@ async fn mint_token_invoke(
         calldata: vec![recipient, Felt::from(raw), Felt::ZERO],
     };
 
-    account
+    let tx_hash = account
         .execute_v3(vec![call])
         .l1_gas(L1_GAS)
         .l1_gas_price(GAS_PRICE_FRI)
@@ -183,8 +185,27 @@ async fn mint_token_invoke(
         .l1_data_gas_price(GAS_PRICE_FRI)
         .send()
         .await
-        .map(|_| ())
-        .with_context(|| format!("submitting the {} mint invoke", token.symbol))
+        .with_context(|| format!("submitting the {} mint invoke", token.symbol))?
+        .transaction_hash;
+
+    // `send` returns once the tx is accepted, not once it executes — and a
+    // reverted tx is still accepted. devnet mines a block per tx, so the receipt
+    // lands almost immediately; poll briefly, then confirm the mint didn't revert.
+    let provider = account.provider();
+    let mut receipt = None;
+    for _ in 0..20 {
+        if let Ok(r) = provider.get_transaction_receipt(tx_hash).await {
+            receipt = Some(r);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let receipt = receipt
+        .with_context(|| format!("the {} mint receipt never landed", token.symbol))?;
+    if let Some(reason) = receipt.receipt.execution_result().revert_reason() {
+        bail!("the {} mint reverted: {reason}", token.symbol);
+    }
+    Ok(())
 }
 
 /// Finish a per-token spinner uniformly for both funding paths.
