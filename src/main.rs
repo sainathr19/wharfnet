@@ -48,6 +48,14 @@ enum Commands {
     Down,
     /// Show the status and endpoints of running chains.
     Status,
+    /// Stream container logs, optionally for one chain or kind.
+    Logs {
+        /// Chain kind (`evm`, `starknet`) or a chain name (`anvil-1`). Omit for all.
+        chain: Option<String>,
+        /// Keep streaming new output, like `tail -f`.
+        #[arg(long, short = 'f')]
+        follow: bool,
+    },
     /// Print the generated docker-compose.yml without booting anything.
     Compose {
         /// Print only the chain services, without the bundled explorers.
@@ -210,6 +218,7 @@ fn run(command: Commands) -> anyhow::Result<()> {
         }
         Commands::Down => orchestrator::down(),
         Commands::Status => orchestrator::status(),
+        Commands::Logs { chain, follow } => orchestrator::logs(chain.as_deref(), follow),
         Commands::Compose { bare, config } => orchestrator::print_compose(!bare, config.as_deref()),
         Commands::Faucet {
             chain,
@@ -359,6 +368,26 @@ mod tests {
             Commands::Faucet { amount, .. } => assert_eq!(amount, 100),
             _ => panic!("expected faucet command"),
         }
+    }
+
+    #[test]
+    fn parses_logs_command() {
+        // No arg → all services, not following.
+        let all = Cli::try_parse_from(["wharfnet", "logs"]).unwrap();
+        assert!(matches!(
+            all.command,
+            Commands::Logs {
+                chain: None,
+                follow: false
+            }
+        ));
+
+        // A selector plus `-f` to follow.
+        let one = Cli::try_parse_from(["wharfnet", "logs", "anvil-1", "-f"]).unwrap();
+        assert!(matches!(
+            one.command,
+            Commands::Logs { chain: Some(ref c), follow: true } if c == "anvil-1"
+        ));
     }
 
     #[test]
