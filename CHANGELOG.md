@@ -105,11 +105,10 @@ under _Unreleased_ and the CLI surface may still change.
   chainId `31337`) via Docker Compose and writes an endpoints manifest: one
   command to a running EVM localnet.
 - **CLI scaffold** — Rust/`clap` command surface (`up`, `down`, `status`,
-  `compose`, `faucet`, `deploy`) that everything else builds on.
+  `compose`, `faucet`) that everything else builds on.
 
 ### Notes
 
-- `deploy` is scaffolded but not yet implemented.
 - EVM and Starknet chains are supported; Solana is planned.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

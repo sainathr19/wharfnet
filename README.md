@@ -57,8 +57,6 @@ Early WIP, but the **EVM stack works end to end today**. See the
 **Planned**
 
 - [ ] Solana chain — validator, faucet, SPL tokens
-- [ ] `deploy` command — deploy bundled/custom contracts on demand
-- [ ] CI polish — machine-readable `status --json`, non-interactive mode
 
 Releases are published to crates.io from a version tag — see
 [RELEASING.md](./RELEASING.md).
@@ -111,8 +109,8 @@ wharfnet faucet anvil-1 0xabc... 100 --token USDC
 wharfnet faucet starknet 0x05a1... 100
 wharfnet faucet starknet-1 0x05a1... 50 --token WBTC
 
-# deploy bundled/custom contracts (planned — not yet implemented)
-wharfnet deploy
+# stream container logs (all, or one chain/kind; -f to follow)
+wharfnet logs starknet-1 -f
 
 # shut everything down
 wharfnet down

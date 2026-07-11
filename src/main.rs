@@ -94,8 +94,6 @@ enum Commands {
         #[command(subcommand)]
         command: StarknetCommands,
     },
-    /// Deploy the pre-baked test tokens and contracts.
-    Deploy,
 }
 
 /// EVM-specific chain controls, grouped under `wharfnet evm …`. These wrap
@@ -254,7 +252,6 @@ fn run(command: Commands) -> anyhow::Result<()> {
                 chain,
             } => sn_control::impersonate(&chain, &address, stop),
         },
-        Commands::Deploy => anyhow::bail!("deploy not yet implemented"),
     }
 }
 
@@ -515,11 +512,6 @@ mod tests {
             })
             .is_ok()
         );
-    }
-
-    #[test]
-    fn run_deploy_is_unimplemented_error() {
-        assert!(run(Commands::Deploy).is_err());
     }
 
     /// Full lifecycle through the public dispatch. Covers `run`'s Up/Down/Status
