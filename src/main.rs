@@ -69,8 +69,8 @@ enum Commands {
     },
     /// Fund an address from the built-in faucet.
     Faucet {
-        /// Target chain — a kind (`evm`, `starknet`) to fund every matching
-        /// chain, or a specific chain name (e.g. `anvil-1`, `starknet-1`).
+        /// Target chain — a kind (`evm`, `starknet`, `solana`) to fund every
+        /// matching chain, or a specific chain name (e.g. `anvil-1`, `solana-1`).
         chain: String,
         /// Recipient address.
         address: String,

@@ -61,10 +61,11 @@ Early WIP, but the **EVM stack works end to end today**. See the
       pause-clock | resume-clock` over surfpool's cheat JSON-RPC
 - [x] Solana test tokens — USDC/WBTC SPL mints at fixed addresses, seeded to the
       dev accounts (created via cheatcodes at boot — no program to deploy)
+- [x] Solana faucet — `wharfnet faucet solana` airdrops SOL and tops up the SPL
+      tokens (additive, no key needed)
 
 **Planned**
 
-- [ ] Solana faucet — same `faucet` command funds SOL + SPL tokens
 - [ ] Solana "weird" test tokens (Token-2022 transfer-fee, interest-bearing)
 - [ ] Solana persistence — `up --resume` / `up --reset`
 - [ ] Solana forking — `fork_url` (surfpool `--rpc-url`)
@@ -457,9 +458,29 @@ surfpool's `surfnet_setAccount` cheat and funds the dev accounts with
 `surfnet_setTokenAccount`. The mint addresses are deterministic (ed25519 of
 `sha256("wharfnet-solana-mint-<symbol>")`) and their mint authority is dev account 0.
 
-Its [chain-control commands](#solana-chain-control) work today; the faucet,
-"weird" Token-2022 test tokens (transfer-fee, interest-bearing), persistence, and
-forking are landing next.
+### Funding a Solana address
+
+The unified `faucet` command works on Solana chains too:
+
+```bash
+# SOL + every SPL token, on every Solana chain
+wharfnet faucet solana 9WzD…AWWM 100
+
+# just one token, on a specific chain
+wharfnet faucet solana-1 9WzD…AWWM 50 --token WBTC
+
+# just native SOL
+wharfnet faucet solana-1 9WzD…AWWM 5 --token SOL
+```
+
+SOL is credited with the standard `requestAirdrop` RPC; the SPL tokens are topped
+up with surfpool's `surfnet_setTokenAccount` cheat (the recipient needs no key).
+Amounts are decimal (scaled by each token's decimals) or exact base units with
+`--raw`. Funding is additive, so repeat top-ups accumulate.
+
+Its [chain-control commands](#solana-chain-control) work today; "weird" Token-2022
+test tokens (transfer-fee, interest-bearing), persistence, and forking are landing
+next.
 
 ## State & persistence
 

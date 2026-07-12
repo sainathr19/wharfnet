@@ -3,11 +3,12 @@
 //!
 //! `wharfnet faucet <chain> <address> <amount> [--token SYMBOL]` funds an address
 //! on a running localnet. `<chain>` matches either a chain kind (`evm`,
-//! `starknet`) — funding every matching chain — or a specific chain name
-//! (`anvil-1`). Each kind funds natively: EVM tops up ETH and mints its ERC-20s
-//! (see [`crate::evm::faucet`]); Starknet mints ETH/STRK through devnet's cheat
-//! and its Cairo test tokens through signed invokes (see
-//! [`crate::starknet::faucet`]).
+//! `starknet`, `solana`) — funding every matching chain — or a specific chain
+//! name (`anvil-1`). Each kind funds natively: EVM tops up ETH and mints its
+//! ERC-20s (see [`crate::evm::faucet`]); Starknet mints ETH/STRK through devnet's
+//! cheat and its Cairo test tokens through signed invokes (see
+//! [`crate::starknet::faucet`]); Solana airdrops SOL and tops up its SPL tokens
+//! through cheatcodes (see [`crate::solana::faucet`]).
 
 use anyhow::{Result, bail};
 use std::path::Path;
@@ -49,6 +50,7 @@ pub(crate) fn run_in(
                 crate::evm::faucet::fund_chain(base, project, chain, address, amount, token, raw)?
             }
             "starknet" => crate::starknet::faucet::fund_chain(chain, address, amount, token, raw)?,
+            "solana" => crate::solana::faucet::fund_chain(chain, address, amount, token, raw)?,
             other => bail!(
                 "faucet is not yet supported for {other} chains (chain '{}')",
                 chain.name
@@ -123,12 +125,12 @@ mod tests {
     #[test]
     fn errors_on_unsupported_chain_kind() {
         let dir = tempdir().unwrap();
-        let mut solana = evm_chain();
-        solana.name = "solana-1".into();
-        solana.kind = "solana".into();
-        solana.tokens.clear();
-        write_manifest(dir.path(), vec![solana]);
-        let err = run_in(dir.path(), "p", "solana", VALID_ADDR, "100", None, false).unwrap_err();
+        let mut aptos = evm_chain();
+        aptos.name = "aptos-1".into();
+        aptos.kind = "aptos".into();
+        aptos.tokens.clear();
+        write_manifest(dir.path(), vec![aptos]);
+        let err = run_in(dir.path(), "p", "aptos", VALID_ADDR, "100", None, false).unwrap_err();
         assert!(err.to_string().contains("not yet supported"), "{err}");
     }
 

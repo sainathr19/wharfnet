@@ -12,6 +12,13 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana faucet** — the same `faucet <chain> <address> [amount] [--token]`
+  command funds Solana addresses: native SOL through the standard `requestAirdrop`
+  RPC, and the SPL test tokens through surfpool's `surfnet_setTokenAccount` cheat
+  (the recipient needs no key). `--token SOL` funds only the native coin. Amounts
+  are decimal (scaled by decimals) or exact base units with `--raw`, and funding
+  is additive — SPL top-ups read the current balance first — matching the
+  EVM/Starknet funders.
 - **Solana test tokens** — every Solana chain now boots with standard SPL test
   tokens (USDC, WBTC) at fixed, deterministic mint addresses, seeded onto the dev
   accounts. Unlike the EVM/Starknet stacks — which load a baked state file —
@@ -135,7 +142,7 @@ under _Unreleased_ and the CLI surface may still change.
 ### Notes
 
 - EVM, Starknet, and Solana chains are supported. The Solana stack currently
-  covers boot, funded dev accounts, chain control, and SPL test tokens; its
-  faucet, weird Token-2022 tokens, persistence, and forking are in progress.
+  covers boot, funded dev accounts, chain control, SPL test tokens, and the
+  faucet; weird Token-2022 tokens, persistence, and forking are in progress.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main
