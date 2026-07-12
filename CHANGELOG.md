@@ -12,6 +12,14 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana chain control** — `wharfnet solana mine`, `increase-time`, `warp`,
+  `pause-clock`, and `resume-clock` wrap surfpool's `surfnet_*` cheat JSON-RPC to
+  drive a running chain, grouped under `solana` so each chain kind owns its own
+  verbs. Differences from the EVM/Starknet controls, all from surfpool: `mine`
+  advances slots (Solana's block cadence); `warp` is forward-only (surfpool can't
+  rewind); there's no `impersonate`/`snapshot`/`revert`; and `pause-clock`/
+  `resume-clock` freeze and restart surfpool's automatic slot production for
+  step-by-step control.
 - **Solana chains** — a `surfpool` chain (`solana-1`, `:8899`) now boots **by
   default** alongside the EVM and Starknet chains. surfpool runs an in-memory SVM
   ("surfnet") that boots in about a second and serves the standard Solana
@@ -119,7 +127,7 @@ under _Unreleased_ and the CLI surface may still change.
 ### Notes
 
 - EVM, Starknet, and Solana chains are supported. The Solana stack currently
-  covers boot + funded dev accounts; its faucet, SPL tokens, persistence,
-  forking, and chain control are in progress.
+  covers boot, funded dev accounts, and chain control; its faucet, SPL tokens,
+  persistence, and forking are in progress.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

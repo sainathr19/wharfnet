@@ -57,6 +57,8 @@ Early WIP, but the **EVM stack works end to end today**. See the
       impersonate` over devnet's cheat JSON-RPC
 - [x] Solana chain (`surfpool`) — boots alongside the EVM and Starknet chains
       with deterministic, funded dev accounts, in the unified `status`/manifest
+- [x] Solana chain control — `wharfnet solana mine | increase-time | warp |
+      pause-clock | resume-clock` over surfpool's cheat JSON-RPC
 
 **Planned**
 
@@ -64,7 +66,6 @@ Early WIP, but the **EVM stack works end to end today**. See the
 - [ ] Solana faucet — same `faucet` command funds SOL + SPL tokens
 - [ ] Solana persistence — `up --resume` / `up --reset`
 - [ ] Solana forking — `fork_url` (surfpool `--rpc-url`)
-- [ ] Solana chain control — time-travel, clock pause/resume
 
 Releases are published to crates.io from a version tag — see
 [RELEASING.md](./RELEASING.md).
@@ -322,6 +323,28 @@ abort), and **`impersonate` works only on a forked chain** — devnet impersonat
 accounts that exist on the forked origin, so on a plain local chain the command
 is refused with a hint to set `fork_url` first.
 
+## Solana chain control
+
+The Solana equivalents live under `wharfnet solana`, wrapping surfpool's
+`surfnet_*` cheat JSON-RPC. Each takes a `--chain` selector (`solana` for every
+Solana chain, or a name like `solana-1`; defaults to `solana`):
+
+```sh
+wharfnet solana mine 10                # advance the chain by 10 slots
+wharfnet solana increase-time 86400    # fast-forward time by a day
+wharfnet solana warp 1893456000        # set the clock to an absolute Unix time
+wharfnet solana pause-clock            # freeze automatic slot production
+wharfnet solana resume-clock           # resume it
+```
+
+Differences from the EVM/Starknet verbs, all from surfpool's design: `mine`
+advances **slots** (Solana's block cadence) rather than mining discrete blocks;
+`warp` is **forward-only** (surfpool can't rewind, so a past target is refused);
+there's **no `impersonate` or `snapshot`/`revert`** (set account state directly
+via cheatcodes instead); and `pause-clock`/`resume-clock` are surfpool extras —
+surfpool auto-produces slots on a timer, so pausing gives you deterministic,
+step-by-step control (`mine` while paused advances exactly N slots).
+
 ## Starknet chains
 
 `wharfnet up` boots a
@@ -415,8 +438,8 @@ keys, funded with 10,000 SOL each at boot and recorded in the manifest with thei
 base58 secrets, so tooling can sign as them. Readiness is checked against
 surfpool's `getHealth` RPC.
 
-SPL test tokens, the faucet, persistence, forking, and chain control are landing
-next — this first cut boots the chain and funds the dev accounts.
+Its [chain-control commands](#solana-chain-control) work today; SPL test tokens,
+the faucet, persistence, and forking are landing next.
 
 ## State & persistence
 
