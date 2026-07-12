@@ -83,6 +83,14 @@ impl SolanaEngine {
         self.fork.is_some()
     }
 
+    /// Path (relative to the state dir) of this chain's persistent surfnet
+    /// database. Named `session-…` so the orchestrator's reset and resume
+    /// detection — which key off that prefix — treat it like any other saved
+    /// session (it matches `.sqlite` there, alongside the `.json` sessions).
+    fn session_rel_path(&self) -> String {
+        format!("state/session-{}.sqlite", self.name)
+    }
+
     /// Deterministic dev accounts, funded at boot. Each keypair is derived from a
     /// documented seed — `sha256("wharfnet-solana-dev-<i>")` fed to ed25519 — so
     /// anyone can regenerate it (the Solana analogue of Anvil's fixed test
@@ -135,16 +143,27 @@ impl Engine for SolanaEngine {
         self.host_port
     }
 
-    fn compose_service(&self, _mode: StateMode) -> String {
+    fn compose_service(&self, mode: StateMode) -> String {
         // The datasource is either a standalone local chain (`--offline`) or a
-        // copy-on-read fork of a live network (`--rpc-url`). Persistence lands in
-        // later work, so that arg slot is empty for now, and the Studio explorer
+        // copy-on-read fork of a live network (`--rpc-url`). The Studio explorer
         // stays off (`--no-studio`) until the explorer work — mirroring how the
         // Starknet UI arrived later. Dev accounts are airdropped either way, so a
         // forked chain still has funded signers layered over the live state.
         let datasource_args = match &self.fork {
             Some(fork) => format!(r#", "--rpc-url", "{}""#, fork.url),
             None => r#", "--offline""#.to_string(),
+        };
+        // Persistence: `--db` + a stable `--surfnet-id` write surfnet state to a
+        // per-chain SQLite db under the bind-mounted state dir, restored on the
+        // next boot. Ephemeral runs in memory (no db), so it's disposable. This
+        // layers over a fork too — local writes persist above the live state.
+        let state_args = match mode {
+            StateMode::Ephemeral => String::new(),
+            StateMode::Persistent => format!(
+                r#", "--db", "/{}", "--surfnet-id", "{}""#,
+                self.session_rel_path(),
+                self.name
+            ),
         };
         SOLANA_SERVICE_TEMPLATE
             .replace("{{NAME}}", &self.name)
@@ -153,7 +172,7 @@ impl Engine for SolanaEngine {
             .replace("{{HOST_PORT}}", &self.host_port.to_string())
             .replace("{{DATASOURCE_ARGS}}", &datasource_args)
             .replace("{{AIRDROP_ARGS}}", &Self::airdrop_args())
-            .replace("{{STATE_ARGS}}", "")
+            .replace("{{STATE_ARGS}}", &state_args)
             .replace("{{STUDIO_ARGS}}", r#", "--no-studio""#)
     }
 
@@ -199,7 +218,15 @@ impl Engine for SolanaEngine {
         if self.is_forked() {
             return Ok(());
         }
-        crate::solana::tokens::seed(&self.manifest_entry())
+        // A resumed persistent session restored the tokens (and the user's
+        // balances) from its db, so only seed when they're absent — re-seeding
+        // would reset the balances to the baked amounts. Ephemeral and first
+        // persistent boots start empty, so they seed as usual.
+        let chain = self.manifest_entry();
+        if crate::solana::tokens::already_seeded(&chain)? {
+            return Ok(());
+        }
+        crate::solana::tokens::seed(&chain)
     }
 }
 
@@ -244,6 +271,20 @@ mod tests {
         }
         // The shared airdrop amount is passed once.
         assert!(yaml.contains("\"--airdrop-amount\", \"10000000000000\""));
+    }
+
+    #[test]
+    fn persistent_compose_adds_a_per_chain_surfnet_db() {
+        let yaml = SolanaEngine::surfpool("solana-1", 8899).compose_service(StateMode::Persistent);
+        assert!(yaml.contains("\"--db\", \"/state/session-solana-1.sqlite\""));
+        assert!(yaml.contains("\"--surfnet-id\", \"solana-1\""));
+    }
+
+    #[test]
+    fn ephemeral_compose_runs_in_memory_without_a_db() {
+        let yaml = SolanaEngine::surfpool("solana-1", 8899).compose_service(StateMode::Ephemeral);
+        assert!(!yaml.contains("--db"), "ephemeral must not persist: {yaml}");
+        assert!(!yaml.contains("--surfnet-id"));
     }
 
     #[test]
@@ -481,5 +522,91 @@ mod tests {
             Some(format!("http://host.docker.internal:{SOL_FORK_ORIGIN_PORT} @ latest").as_str())
         );
         assert!(chain.tokens.is_empty(), "a fork advertises no baked tokens");
+    }
+
+    /// A dedicated port for the persistence cycle, away from the other e2e ports.
+    const SOL_PERSIST_PORT: u16 = 18996;
+
+    /// End-to-end persistence: a faucet top-up survives `down` → `up --resume`
+    /// (surfpool restores its SQLite surfnet db), and `up --reset` discards it.
+    /// This is the proof `--resume`/`--reset` work on Solana. Runs several boot
+    /// cycles, so it's the heaviest Solana test; self-skips without Docker.
+    #[test]
+    fn solana_faucet_funding_survives_down_and_up_resume() {
+        if !docker_available() {
+            eprintln!("skipping solana persistence e2e: docker unavailable");
+            return;
+        }
+        use crate::runtime::orchestrator::{self, UpMode};
+
+        let dir = tempfile::TempDir::new_in(".").expect("temp dir under crate root");
+        let base = dir.path();
+        let project = "wharfnet-e2e-sol-persist";
+        let chain = "sol-persist";
+        let config = base.join("wharfnet.toml");
+        std::fs::write(
+            &config,
+            format!(
+                "[[chains]]\nname = \"{chain}\"\nkind = \"solana\"\nport = {SOL_PERSIST_PORT}\n"
+            ),
+        )
+        .unwrap();
+
+        // Tear the containers down even if an assertion panics. Declared after
+        // `dir` so it drops first — down_in still sees the compose file.
+        struct Teardown<'a>(&'a std::path::Path, &'a str);
+        impl Drop for Teardown<'_> {
+            fn drop(&mut self) {
+                let _ = crate::runtime::orchestrator::down_in(self.0, self.1);
+            }
+        }
+        let _guard = Teardown(base, project);
+
+        // A fresh, non-dev recipient — its funding comes only from the faucet, so
+        // it's purely runtime state the surfnet db must persist (the dev accounts
+        // are re-airdropped at boot, so they're not a clean persistence signal).
+        let recipient = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+        let usdc = "94C6wFGeVr5SahK9owBMBhpFPRtvLuZhQQVRh7NYrEp9";
+        let usdc_balance = || -> u64 {
+            let body = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"getTokenAccountsByOwner","params":["{recipient}",{{"mint":"{usdc}"}},{{"encoding":"jsonParsed"}}]}}"#
+            );
+            let resp = rpc(SOL_PERSIST_PORT, &body);
+            let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+            v["result"]["value"][0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"]
+                .as_str()
+                .unwrap_or("0")
+                .parse()
+                .unwrap()
+        };
+
+        // 1) First `up --resume`: fresh db, tokens seeded; fund the recipient.
+        orchestrator::up_in(base, project, UpMode::Resume, false, Some(&config))
+            .expect("first up --resume should boot");
+        crate::faucet::run_in(base, project, chain, recipient, "7", Some("USDC"), false)
+            .expect("funding USDC should succeed");
+        assert_eq!(usdc_balance(), 7_000_000);
+
+        // 2) Tear down (the bind-mounted db survives on the host) and resume:
+        //    surfpool restores the surfnet, so the funding is back.
+        orchestrator::down_in(base, project).expect("down should succeed");
+        orchestrator::up_in(base, project, UpMode::Resume, false, Some(&config))
+            .expect("second up --resume should boot");
+        assert_eq!(
+            usdc_balance(),
+            7_000_000,
+            "the USDC funding must survive down → up --resume"
+        );
+
+        // 3) `up --reset` discards the db and boots fresh — the funding is gone
+        //    (the recipient was never airdropped, only faucet-funded).
+        orchestrator::down_in(base, project).expect("down before reset should succeed");
+        orchestrator::up_in(base, project, UpMode::Reset, false, Some(&config))
+            .expect("up --reset should boot");
+        assert_eq!(
+            usdc_balance(),
+            0,
+            "up --reset must discard the persisted funding"
+        );
     }
 }

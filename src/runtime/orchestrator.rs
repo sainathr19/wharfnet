@@ -269,7 +269,10 @@ fn has_saved_session(base: &Path) -> bool {
 }
 
 fn is_session_file(name: &str) -> bool {
-    name.starts_with("session-") && name.ends_with(".json")
+    // Anvil/devnet dump a `session-<chain>.json`; surfpool persists a
+    // `session-<chain>.sqlite` (plus its `-wal`/`-shm` sidecars). Both are
+    // per-chain saved sessions the resume/reset machinery keys off.
+    name.starts_with("session-") && (name.ends_with(".json") || name.contains(".sqlite"))
 }
 
 /// Print the generated compose file to stdout without booting anything.
@@ -831,6 +834,10 @@ mod tests {
         fs::create_dir_all(&state).unwrap();
         fs::write(state.join("session-anvil-1.json"), "a").unwrap();
         fs::write(state.join("session-anvil-2.json"), "b").unwrap();
+        // A surfpool Solana session is a SQLite db plus its WAL sidecars.
+        fs::write(state.join("session-solana-1.sqlite"), "db").unwrap();
+        fs::write(state.join("session-solana-1.sqlite-wal"), "wal").unwrap();
+        fs::write(state.join("session-solana-1.sqlite-shm"), "shm").unwrap();
         fs::write(state.join("anvil-tokens.json"), "baked").unwrap();
 
         assert!(has_saved_session(dir.path()));
@@ -840,6 +847,10 @@ mod tests {
         assert!(state.join("anvil-tokens.json").exists());
         assert!(!state.join("session-anvil-1.json").exists());
         assert!(!state.join("session-anvil-2.json").exists());
+        // The Solana db and both sidecars are cleared.
+        assert!(!state.join("session-solana-1.sqlite").exists());
+        assert!(!state.join("session-solana-1.sqlite-wal").exists());
+        assert!(!state.join("session-solana-1.sqlite-shm").exists());
     }
 
     #[test]

@@ -65,11 +65,12 @@ Early WIP, but the **EVM stack works end to end today**. See the
       tokens (additive, no key needed)
 - [x] Solana forking — `fork_url` per chain (surfpool `--rpc-url`, copy-on-read);
       no `fork_block` (surfpool has no fork-at-slot)
+- [x] Solana persistence — `up --resume` / `up --reset` keep (or discard) a
+      Solana chain's state across restarts, like the EVM/Starknet chains
 
 **Planned**
 
 - [ ] Solana "weird" test tokens (Token-2022 transfer-fee, interest-bearing)
-- [ ] Solana persistence — `up --resume` / `up --reset`
 
 Releases are published to crates.io from a version tag — see
 [RELEASING.md](./RELEASING.md).
@@ -497,9 +498,10 @@ Amounts are decimal (scaled by each token's decimals) or exact base units with
 `--raw`. Funding is additive, so repeat top-ups accumulate.
 
 Solana chains fork the same way as the EVM/Starknet ones (see
-[Mainnet forking](#mainnet-forking)) and their
+[Mainnet forking](#mainnet-forking)), persist across `up --resume`/`--reset` (see
+[State & persistence](#state--persistence)), and their
 [chain-control commands](#solana-chain-control) work today; "weird" Token-2022
-test tokens (transfer-fee, interest-bearing) and persistence are landing next.
+test tokens (transfer-fee, interest-bearing) are landing next.
 
 ## State & persistence
 
@@ -516,11 +518,12 @@ When you'd rather pick up where you left off:
 | `wharfnet up --resume` | Restore the previous session if one exists (else fresh), and **keep saving** — balances, txs, and deployments survive `down` → `up --resume`. |
 | `wharfnet up --reset` | Discard any saved session, then boot fresh. |
 
-Under the hood each chain continuously dumps its state to a per-chain snapshot
-(`.wharfnet/state/session-<chain>.json`) that it reloads on the next `--resume`:
-EVM chains use Anvil's `--state`, and Starknet chains dump the devnet replay log
-on every block (one per transaction). `--resume` and `--reset` are mutually
-exclusive.
+Under the hood each chain persists to a per-chain session under
+`.wharfnet/state/` that it reloads on the next `--resume`: EVM chains use Anvil's
+`--state` (`session-<chain>.json`), Starknet chains dump the devnet replay log on
+every block (one per transaction), and Solana chains write a surfnet SQLite db
+(`session-<chain>.sqlite`) via surfpool's `--db`. `--resume` and `--reset` are
+mutually exclusive.
 
 ## License
 

@@ -12,6 +12,13 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana persistence** — `up --resume` / `up --reset` now cover Solana chains
+  too. Each persists to its own `session-<chain>.sqlite` surfnet database via
+  surfpool's `--db`/`--surfnet-id`, so balances, mints, and transactions survive
+  `down` → `up --resume` and are wiped by `up --reset` — matching the EVM and
+  Starknet chains. Because the SPL test tokens are seeded via cheatcodes rather
+  than a baked file, a resumed chain detects they're already present and skips
+  re-seeding, so it never clobbers your balances.
 - **Solana forking** — the `fork_url` field now works on Solana chains, booting
   them as a **copy-on-read** fork of a live network via surfpool's `--rpc-url`, so
   you can test against real accounts and programs locally. `${VAR}` expansion and
@@ -150,6 +157,6 @@ under _Unreleased_ and the CLI surface may still change.
 
 - EVM, Starknet, and Solana chains are supported. The Solana stack currently
   covers boot, funded dev accounts, chain control, SPL test tokens, the faucet,
-  and forking; weird Token-2022 tokens and persistence are in progress.
+  forking, and persistence; weird Token-2022 tokens are the main piece left.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

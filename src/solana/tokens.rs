@@ -77,6 +77,22 @@ pub(crate) fn manifest_tokens() -> Vec<Token> {
         .collect()
 }
 
+/// Whether the test tokens are already present on-chain, detected by the first
+/// mint's existence. Used to skip re-seeding a resumed persistent session (whose
+/// db already restored the mints and the user's balances).
+pub(crate) fn already_seeded(chain: &ChainEntry) -> Result<bool> {
+    let Some(first) = TOKENS.first() else {
+        return Ok(true);
+    };
+    let res = rpc::call(
+        chain,
+        "getAccountInfo",
+        json!([first.mint, { "encoding": "base64" }]),
+    )?;
+    // getAccountInfo returns `value: null` when the account doesn't exist.
+    Ok(res.get("value").is_some_and(|v| !v.is_null()))
+}
+
 /// Seed the test tokens onto a live chain via surfpool cheatcodes: create each
 /// mint, then fund every dev account's associated token account. Idempotent —
 /// re-running overwrites to the same state.
