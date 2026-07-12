@@ -12,6 +12,13 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana forking** — the `fork_url` field now works on Solana chains, booting
+  them as a **copy-on-read** fork of a live network via surfpool's `--rpc-url`, so
+  you can test against real accounts and programs locally. `${VAR}` expansion and
+  URL redaction are shared with the EVM/Starknet paths; a forked chain mirrors
+  live state, so it seeds none of the baked SPL test tokens (the dev accounts are
+  still airdropped over the fork). Unlike the EVM/Starknet forks, **`fork_block`
+  is unsupported** — surfpool has no fork-at-slot flag — and is rejected on load.
 - **Solana faucet** — the same `faucet <chain> <address> [amount] [--token]`
   command funds Solana addresses: native SOL through the standard `requestAirdrop`
   RPC, and the SPL test tokens through surfpool's `surfnet_setTokenAccount` cheat
@@ -142,7 +149,7 @@ under _Unreleased_ and the CLI surface may still change.
 ### Notes
 
 - EVM, Starknet, and Solana chains are supported. The Solana stack currently
-  covers boot, funded dev accounts, chain control, SPL test tokens, and the
-  faucet; weird Token-2022 tokens, persistence, and forking are in progress.
+  covers boot, funded dev accounts, chain control, SPL test tokens, the faucet,
+  and forking; weird Token-2022 tokens and persistence are in progress.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

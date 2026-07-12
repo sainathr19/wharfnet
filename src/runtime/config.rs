@@ -285,10 +285,12 @@ fn validate(config: &Config) -> Result<()> {
             "solana" => {
                 // Solana chains run surfpool's local surfnet, identified as
                 // "localnet", so no chain_id is required (like Starknet). Forking
-                // isn't wired up yet — reject it rather than silently ignore it.
-                if c.fork_url.is_some() {
+                // is supported via surfpool's `--rpc-url` (the shared `fork_url`
+                // field), but surfpool has no fork-at-slot flag, so `fork_block`
+                // can't be honored — reject it rather than silently ignore it.
+                if c.fork_block.is_some() {
                     bail!(
-                        "chain '{}': forking a Solana chain is not supported yet",
+                        "chain '{}': surfpool cannot pin a Solana fork to a block/slot — remove fork_block",
                         c.name
                     );
                 }
@@ -589,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_forking_a_solana_chain_for_now() {
+    fn solana_accepts_a_fork_url() {
         let dir = tempdir().unwrap();
         let path = write(
             &dir,
@@ -601,10 +603,31 @@ mod tests {
             fork_url = "https://api.mainnet-beta.solana.com"
             "#,
         );
+        let c = load_from(&path).unwrap();
+        assert_eq!(
+            c.chains[0].fork_url.as_deref(),
+            Some("https://api.mainnet-beta.solana.com")
+        );
+    }
+
+    #[test]
+    fn solana_rejects_fork_block() {
+        let dir = tempdir().unwrap();
+        // surfpool has no fork-at-slot flag, so pinning a Solana fork is refused.
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "solana-1"
+            kind = "solana"
+            port = 8899
+            fork_url = "https://api.mainnet-beta.solana.com"
+            fork_block = 250000000
+            "#,
+        );
         let err = load_from(&path).unwrap_err();
         assert!(
-            err.to_string()
-                .contains("forking a Solana chain is not supported"),
+            err.to_string().contains("cannot pin a Solana fork"),
             "{err}"
         );
     }

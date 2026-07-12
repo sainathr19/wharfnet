@@ -105,7 +105,14 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
             }
             Box::new(engine)
         }
-        "solana" => Box::new(SolanaEngine::surfpool(&c.name, c.port)),
+        "solana" => {
+            let mut engine = SolanaEngine::surfpool(&c.name, c.port);
+            if let Some(url) = &c.fork_url {
+                // surfpool takes no fork slot; config rejects fork_block on Solana.
+                engine = engine.fork(url.clone());
+            }
+            Box::new(engine)
+        }
         other => unreachable!("validate() rejects unsupported kind '{other}'"),
     }
 }

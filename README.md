@@ -63,12 +63,13 @@ Early WIP, but the **EVM stack works end to end today**. See the
       dev accounts (created via cheatcodes at boot — no program to deploy)
 - [x] Solana faucet — `wharfnet faucet solana` airdrops SOL and tops up the SPL
       tokens (additive, no key needed)
+- [x] Solana forking — `fork_url` per chain (surfpool `--rpc-url`, copy-on-read);
+      no `fork_block` (surfpool has no fork-at-slot)
 
 **Planned**
 
 - [ ] Solana "weird" test tokens (Token-2022 transfer-fee, interest-bearing)
 - [ ] Solana persistence — `up --resume` / `up --reset`
-- [ ] Solana forking — `fork_url` (surfpool `--rpc-url`)
 
 Releases are published to crates.io from a version tag — see
 [RELEASING.md](./RELEASING.md).
@@ -219,6 +220,23 @@ fork_block = 900000            # optional; omit to track the latest block
 
 The predeployed dev accounts still apply (devnet funds them over the fork), so
 you can send transactions against real forked state right away.
+
+**Solana chains fork the same way** — set `fork_url` on a `kind = "solana"` chain
+and surfpool boots as a **copy-on-read** fork of that network, fetching accounts
+from the source RPC on first access. The predeployed dev accounts are still
+airdropped over the fork, so you have funded signers immediately.
+
+```toml
+[[chains]]
+name = "sol-fork"
+kind = "solana"
+port = 8899
+fork_url = "${SOLANA_RPC}"   # a Solana JSON-RPC endpoint (e.g. mainnet-beta)
+```
+
+One difference: **`fork_block` is not supported for Solana** — surfpool has no
+fork-at-slot flag, so a Solana fork always tracks the datasource's current slot.
+Setting `fork_block` on a `kind = "solana"` chain is rejected on load.
 
 ## Test tokens
 
@@ -478,9 +496,10 @@ up with surfpool's `surfnet_setTokenAccount` cheat (the recipient needs no key).
 Amounts are decimal (scaled by each token's decimals) or exact base units with
 `--raw`. Funding is additive, so repeat top-ups accumulate.
 
-Its [chain-control commands](#solana-chain-control) work today; "weird" Token-2022
-test tokens (transfer-fee, interest-bearing), persistence, and forking are landing
-next.
+Solana chains fork the same way as the EVM/Starknet ones (see
+[Mainnet forking](#mainnet-forking)) and their
+[chain-control commands](#solana-chain-control) work today; "weird" Token-2022
+test tokens (transfer-fee, interest-bearing) and persistence are landing next.
 
 ## State & persistence
 

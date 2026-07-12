@@ -34,11 +34,28 @@ const SOLANA_CHAIN_ID: &str = "localnet";
 /// Compose service template for a `surfpool` Solana chain.
 const SOLANA_SERVICE_TEMPLATE: &str = include_str!("../resources/docker/services/solana.yml");
 
+/// Fork settings for a Solana chain: mirror a live network's state from `url` (a
+/// Solana JSON-RPC provider) via surfpool's copy-on-read fork. Unlike the EVM and
+/// Starknet forks, there is **no block/slot pin** — surfpool has no fork-at-slot
+/// flag, so a fork always tracks the datasource's current slot (config rejects
+/// `fork_block` on Solana chains).
+struct Fork {
+    url: String,
+}
+
+impl Fork {
+    /// A redacted description safe to record and print — the RPC key is dropped.
+    fn describe(&self) -> String {
+        crate::runtime::fork::describe(&self.url, None)
+    }
+}
+
 /// A `surfpool`-backed Solana chain.
 pub struct SolanaEngine {
     name: String,
     image: String,
     host_port: u16,
+    fork: Option<Fork>,
 }
 
 impl SolanaEngine {
@@ -47,7 +64,23 @@ impl SolanaEngine {
             name: name.to_string(),
             image: SURFPOOL_IMAGE.to_string(),
             host_port,
+            fork: None,
         }
+    }
+
+    /// Fork this chain from a live Solana RPC via surfpool's `--rpc-url`
+    /// (copy-on-read). A forked chain mirrors real network state, so — like the
+    /// EVM and Starknet chains — it does not seed the baked SPL test tokens and
+    /// advertises none. surfpool can't pin the fork to a slot, so there's no
+    /// block argument (config rejects `fork_block` for Solana).
+    pub fn fork(mut self, url: String) -> Self {
+        self.fork = Some(Fork { url });
+        self
+    }
+
+    /// Whether this chain forks a live network.
+    fn is_forked(&self) -> bool {
+        self.fork.is_some()
     }
 
     /// Deterministic dev accounts, funded at boot. Each keypair is derived from a
@@ -103,22 +136,32 @@ impl Engine for SolanaEngine {
     }
 
     fn compose_service(&self, _mode: StateMode) -> String {
-        // A standalone local chain runs `--offline` (no mainnet datasource).
-        // Forking (`--rpc-url`) and persistence land in later work, so their arg
-        // slots are empty for now, and the Studio explorer stays off (`--no-studio`)
-        // until the explorer work — mirroring how the Starknet UI arrived later.
+        // The datasource is either a standalone local chain (`--offline`) or a
+        // copy-on-read fork of a live network (`--rpc-url`). Persistence lands in
+        // later work, so that arg slot is empty for now, and the Studio explorer
+        // stays off (`--no-studio`) until the explorer work — mirroring how the
+        // Starknet UI arrived later. Dev accounts are airdropped either way, so a
+        // forked chain still has funded signers layered over the live state.
+        let datasource_args = match &self.fork {
+            Some(fork) => format!(r#", "--rpc-url", "{}""#, fork.url),
+            None => r#", "--offline""#.to_string(),
+        };
         SOLANA_SERVICE_TEMPLATE
             .replace("{{NAME}}", &self.name)
             .replace("{{IMAGE}}", &self.image)
             .replace("{{PORT}}", &SURFPOOL_INTERNAL_PORT.to_string())
             .replace("{{HOST_PORT}}", &self.host_port.to_string())
-            .replace("{{DATASOURCE_ARGS}}", r#", "--offline""#)
+            .replace("{{DATASOURCE_ARGS}}", &datasource_args)
             .replace("{{AIRDROP_ARGS}}", &Self::airdrop_args())
             .replace("{{STATE_ARGS}}", "")
             .replace("{{STUDIO_ARGS}}", r#", "--no-studio""#)
     }
 
     fn manifest_entry(&self) -> ChainEntry {
+        // A forked chain mirrors live state; wharfnet seeds nothing onto it, so it
+        // advertises no baked tokens — only the fork. The predeployed dev accounts
+        // still apply (surfpool airdrops them over the fork).
+        let forked = self.is_forked();
         ChainEntry {
             name: self.name.clone(),
             kind: "solana".to_string(),
@@ -126,11 +169,15 @@ impl Engine for SolanaEngine {
             chain_id: SOLANA_CHAIN_ID.to_string(),
             accounts: Self::accounts(),
             // The SPL test tokens are seeded post-boot via cheatcodes (see
-            // `post_boot`); advertise their deterministic mint addresses here.
-            // Forking and the Studio explorer arrive in later work.
-            tokens: crate::solana::tokens::manifest_tokens(),
+            // `post_boot`); advertise their deterministic mint addresses here. The
+            // Studio explorer arrives in later work.
+            tokens: if forked {
+                Vec::new()
+            } else {
+                crate::solana::tokens::manifest_tokens()
+            },
             contracts: Vec::new(),
-            fork: None,
+            fork: self.fork.as_ref().map(Fork::describe),
             explorer: None,
         }
     }
@@ -144,9 +191,14 @@ impl Engine for SolanaEngine {
     }
 
     fn post_boot(&self) -> anyhow::Result<()> {
-        // surfpool has no program to deploy for SPL tokens, so wharfnet seeds the
-        // baked test tokens (create mints, fund the dev accounts) via cheatcodes
-        // once the RPC is live, rather than loading a state file at boot.
+        // A forked chain mirrors live state, so it seeds no baked tokens (its
+        // manifest advertises none). Otherwise surfpool has no program to deploy
+        // for SPL tokens, so wharfnet seeds the baked test tokens (create mints,
+        // fund the dev accounts) via cheatcodes once the RPC is live, rather than
+        // loading a state file at boot.
+        if self.is_forked() {
+            return Ok(());
+        }
         crate::solana::tokens::seed(&self.manifest_entry())
     }
 }
@@ -248,6 +300,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn forked_compose_uses_rpc_url_instead_of_offline() {
+        let yaml = SolanaEngine::surfpool("sol-fork", 8899)
+            .fork("https://rpc.example/key".to_string())
+            .compose_service(StateMode::Ephemeral);
+        assert!(yaml.contains("\"--rpc-url\", \"https://rpc.example/key\""));
+        // Check the quoted command token, not a bare substring — the template
+        // comment mentions `--offline` even when the flag itself is absent.
+        assert!(
+            !yaml.contains("\"--offline\""),
+            "a forked chain must not run offline: {yaml}"
+        );
+        // Dev accounts are still airdropped over the fork.
+        assert!(yaml.contains("\"--airdrop\""));
+        assert!(!yaml.contains("{{"), "no placeholder should remain: {yaml}");
+    }
+
+    #[test]
+    fn forked_manifest_redacts_the_url_and_drops_baked_tokens() {
+        let entry = SolanaEngine::surfpool("sol-fork", 8899)
+            .fork("https://api.example.com/rpc/SECRET".to_string())
+            .manifest_entry();
+        // The RPC key is never recorded; a Solana fork is never block-pinned, so
+        // it's always described as tracking the datasource's live state.
+        assert_eq!(
+            entry.fork.as_deref(),
+            Some("https://api.example.com @ latest")
+        );
+        // A fork mirrors live state, so it advertises none of the baked tokens —
+        // but the predeployed dev accounts still apply over the fork.
+        assert!(entry.tokens.is_empty());
+        assert_eq!(entry.accounts.len(), 3);
+    }
+
     // ---- docker-backed end-to-end run against a live surfpool ----
     //
     // Boots a real surfpool chain and checks the two facts the engine relies on:
@@ -327,5 +413,73 @@ mod tests {
                 account.address
             );
         }
+    }
+
+    /// Dedicated ports for the forking e2e: an origin chain and the chain that
+    /// forks it. Distinct from the other Solana e2e ports so they run in parallel.
+    const SOL_FORK_ORIGIN_PORT: u16 = 18994;
+    const SOL_FORK_CHILD_PORT: u16 = 18995;
+
+    #[test]
+    fn solana_chain_can_fork_a_live_network() {
+        if !docker_available() {
+            eprintln!("skipping solana fork e2e: docker unavailable");
+            return;
+        }
+        // Origin: a full wharfnet Solana chain, so it already has the baked USDC
+        // seeded and the dev accounts funded — concrete state the fork should see.
+        // Bound to `_origin` so it stays up (and tears down on drop).
+        let _origin = Localnet::boot_solana("t-sol-fork-origin", SOL_FORK_ORIGIN_PORT);
+        let origin_manifest = Manifest::read(&manifest_path(_origin.base())).unwrap();
+        let usdc = origin_manifest.chains[0]
+            .tokens
+            .iter()
+            .find(|t| t.symbol == "USDC")
+            .unwrap()
+            .address
+            .clone();
+        let dev0 = origin_manifest.chains[0].accounts[0].address.clone();
+
+        // Child: a wharfnet Solana chain forking the origin's RPC. Inside the
+        // container the origin is reachable on the host via host.docker.internal.
+        let child = Localnet::boot_solana_fork(
+            "t-sol-fork-child",
+            SOL_FORK_CHILD_PORT,
+            &format!("http://host.docker.internal:{SOL_FORK_ORIGIN_PORT}"),
+        );
+
+        // The fork mirrors the origin's baked USDC mint (copy-on-read)...
+        let mint_info = rpc(
+            SOL_FORK_CHILD_PORT,
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["{usdc}",{{"encoding":"jsonParsed"}}]}}"#
+            ),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&mint_info).unwrap();
+        assert_eq!(
+            parsed["result"]["value"]["data"]["parsed"]["type"], "mint",
+            "fork should see the origin's USDC mint: {mint_info}"
+        );
+
+        // ...and the origin's funded dev account.
+        let bal = rpc(
+            SOL_FORK_CHILD_PORT,
+            &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"getBalance","params":["{dev0}"]}}"#),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&bal).unwrap();
+        assert!(
+            parsed["result"]["value"].as_u64().unwrap() >= AIRDROP_LAMPORTS,
+            "fork should mirror the origin's funded dev account: {bal}"
+        );
+
+        // The manifest records the fork (redacted) and, since a fork mirrors live
+        // state, advertises none of wharfnet's baked tokens.
+        let manifest = Manifest::read(&manifest_path(child.base())).unwrap();
+        let chain = &manifest.chains[0];
+        assert_eq!(
+            chain.fork.as_deref(),
+            Some(format!("http://host.docker.internal:{SOL_FORK_ORIGIN_PORT} @ latest").as_str())
+        );
+        assert!(chain.tokens.is_empty(), "a fork advertises no baked tokens");
     }
 }
