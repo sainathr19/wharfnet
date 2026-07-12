@@ -59,11 +59,13 @@ Early WIP, but the **EVM stack works end to end today**. See the
       with deterministic, funded dev accounts, in the unified `status`/manifest
 - [x] Solana chain control — `wharfnet solana mine | increase-time | warp |
       pause-clock | resume-clock` over surfpool's cheat JSON-RPC
+- [x] Solana test tokens — USDC/WBTC SPL mints at fixed addresses, seeded to the
+      dev accounts (created via cheatcodes at boot — no program to deploy)
 
 **Planned**
 
-- [ ] Solana test tokens (SPL) at fixed addresses
 - [ ] Solana faucet — same `faucet` command funds SOL + SPL tokens
+- [ ] Solana "weird" test tokens (Token-2022 transfer-fee, interest-bearing)
 - [ ] Solana persistence — `up --resume` / `up --reset`
 - [ ] Solana forking — `fork_url` (surfpool `--rpc-url`)
 
@@ -438,8 +440,26 @@ keys, funded with 10,000 SOL each at boot and recorded in the manifest with thei
 base58 secrets, so tooling can sign as them. Readiness is checked against
 surfpool's `getHealth` RPC.
 
-Its [chain-control commands](#solana-chain-control) work today; SPL test tokens,
-the faucet, persistence, and forking are landing next.
+### Solana test tokens
+
+Every Solana chain also boots with standard **SPL test tokens** at fixed mint
+addresses (identical on every chain), each seeded onto the dev accounts:
+
+| Token | Decimals | Mint address                                   |
+| ----- | -------- | ---------------------------------------------- |
+| USDC  | 6        | `94C6wFGeVr5SahK9owBMBhpFPRtvLuZhQQVRh7NYrEp9` |
+| WBTC  | 8        | `Fp7Dnb8KKkWWw5RfUPsQBNRrooj75gbNaWoC28AnCn3E` |
+
+Unlike the EVM/Starknet stacks — which bake a state file the node loads at boot —
+surfpool needs no program to deploy (the SPL Token program is native), so wharfnet
+seeds these at runtime the moment the chain is ready: it creates each mint with
+surfpool's `surfnet_setAccount` cheat and funds the dev accounts with
+`surfnet_setTokenAccount`. The mint addresses are deterministic (ed25519 of
+`sha256("wharfnet-solana-mint-<symbol>")`) and their mint authority is dev account 0.
+
+Its [chain-control commands](#solana-chain-control) work today; the faucet,
+"weird" Token-2022 test tokens (transfer-fee, interest-bearing), persistence, and
+forking are landing next.
 
 ## State & persistence
 

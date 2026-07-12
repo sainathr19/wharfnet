@@ -70,4 +70,11 @@ pub trait Engine {
     fn explorer_target(&self) -> Option<ExplorerTarget> {
         None
     }
+    /// Optional setup run once the chain's RPC is live, for engines that finish
+    /// after boot rather than by loading a baked file — e.g. surfpool seeds its
+    /// SPL test tokens through cheatcodes. Defaults to a no-op; the EVM and
+    /// Starknet engines bake their state at boot instead.
+    fn post_boot(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }

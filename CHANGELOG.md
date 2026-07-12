@@ -12,6 +12,14 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana test tokens** — every Solana chain now boots with standard SPL test
+  tokens (USDC, WBTC) at fixed, deterministic mint addresses, seeded onto the dev
+  accounts. Unlike the EVM/Starknet stacks — which load a baked state file —
+  surfpool has no program to deploy for SPL, so wharfnet creates the mints
+  (`surfnet_setAccount` with a hand-built SPL Mint) and funds the accounts
+  (`surfnet_setTokenAccount`) via cheatcodes the moment the RPC is live, through a
+  new post-boot engine hook. The mints are listed in the unified `status`/manifest.
+  "Weird" Token-2022 test tokens (transfer-fee, interest-bearing) are a follow-up.
 - **Solana chain control** — `wharfnet solana mine`, `increase-time`, `warp`,
   `pause-clock`, and `resume-clock` wrap surfpool's `surfnet_*` cheat JSON-RPC to
   drive a running chain, grouped under `solana` so each chain kind owns its own
@@ -127,7 +135,7 @@ under _Unreleased_ and the CLI surface may still change.
 ### Notes
 
 - EVM, Starknet, and Solana chains are supported. The Solana stack currently
-  covers boot, funded dev accounts, and chain control; its faucet, SPL tokens,
-  persistence, and forking are in progress.
+  covers boot, funded dev accounts, chain control, and SPL test tokens; its
+  faucet, weird Token-2022 tokens, persistence, and forking are in progress.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

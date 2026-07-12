@@ -5,7 +5,7 @@
 //! the `_in` variants take them as parameters so they can be driven against an
 //! isolated temp dir in tests.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
@@ -396,6 +396,15 @@ pub(crate) fn up_in(
             READY_TIMEOUT.as_secs(),
             not_ready.join(", ")
         );
+    }
+
+    // Run any post-boot setup now the chains answer RPC — e.g. surfpool seeds its
+    // SPL test tokens through cheatcodes. A no-op for engines that bake their
+    // state at boot (Anvil, starknet-devnet), so this is cheap in the common case.
+    for engine in &engines {
+        engine
+            .post_boot()
+            .with_context(|| format!("post-boot setup for chain '{}'", engine.name()))?;
     }
 
     let mut entries: Vec<_> = engines.iter().map(|e| e.manifest_entry()).collect();

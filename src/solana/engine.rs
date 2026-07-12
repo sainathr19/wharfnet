@@ -125,9 +125,10 @@ impl Engine for SolanaEngine {
             rpc: format!("http://127.0.0.1:{}", self.host_port),
             chain_id: SOLANA_CHAIN_ID.to_string(),
             accounts: Self::accounts(),
-            // SPL test tokens, forking, and the Studio explorer arrive in later
-            // work; a freshly-booted local chain advertises none of them yet.
-            tokens: Vec::new(),
+            // The SPL test tokens are seeded post-boot via cheatcodes (see
+            // `post_boot`); advertise their deterministic mint addresses here.
+            // Forking and the Studio explorer arrive in later work.
+            tokens: crate::solana::tokens::manifest_tokens(),
             contracts: Vec::new(),
             fork: None,
             explorer: None,
@@ -140,6 +141,13 @@ impl Engine for SolanaEngine {
         HealthProbe::JsonRpc {
             method: "getHealth",
         }
+    }
+
+    fn post_boot(&self) -> anyhow::Result<()> {
+        // surfpool has no program to deploy for SPL tokens, so wharfnet seeds the
+        // baked test tokens (create mints, fund the dev accounts) via cheatcodes
+        // once the RPC is live, rather than loading a state file at boot.
+        crate::solana::tokens::seed(&self.manifest_entry())
     }
 }
 
@@ -197,8 +205,10 @@ mod tests {
             entry.accounts[0].address,
             "9akreS78QY4sx2d3aXHdrPCv1rQay1JXoiVWXK6rP9jh"
         );
-        // No baked tokens/contracts/fork/explorer on a fresh local chain yet.
-        assert!(entry.tokens.is_empty());
+        // The baked SPL test tokens are advertised (seeded post-boot); no infra
+        // contracts, fork, or explorer on a fresh local chain yet.
+        let symbols: Vec<&str> = entry.tokens.iter().map(|t| t.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["USDC", "WBTC"]);
         assert!(entry.contracts.is_empty());
         assert!(entry.fork.is_none());
         assert!(entry.explorer.is_none());
