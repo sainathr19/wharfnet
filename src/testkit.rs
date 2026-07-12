@@ -75,6 +75,15 @@ impl Localnet {
         )
     }
 
+    /// Boot one `surfpool` Solana chain named `chain` on host `port`, isolated
+    /// under its own temp dir and compose project. Panics on failure.
+    pub(crate) fn boot_solana(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"solana\"\nport = {port}\n"),
+        )
+    }
+
     /// Boot a `starknet-devnet` chain that forks a live Starknet RPC at
     /// `fork_url`. Panics on failure.
     pub(crate) fn boot_starknet_fork(chain: &str, port: u16, fork_url: &str) -> Localnet {

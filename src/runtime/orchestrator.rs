@@ -20,6 +20,7 @@ use super::engine::{Engine, HealthProbe, StateMode};
 use super::manifest::Manifest;
 use super::ui;
 use crate::evm::engine::EvmEngine;
+use crate::solana::engine::SolanaEngine;
 use crate::starknet::engine::StarknetEngine;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
@@ -104,6 +105,7 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
             }
             Box::new(engine)
         }
+        "solana" => Box::new(SolanaEngine::surfpool(&c.name, c.port)),
         other => unreachable!("validate() rejects unsupported kind '{other}'"),
     }
 }
@@ -597,9 +599,9 @@ mod tests {
     use std::net::TcpListener;
     use tempfile::tempdir;
 
-    /// The default engine set (two Anvil chains + one Starknet chain), with
-    /// explorers off — the generic checks don't care about the `--ui` flag; the
-    /// tests that do build their own engine set with it enabled.
+    /// The default engine set (two Anvil chains, one Starknet chain, one Solana
+    /// chain), with explorers off — the generic checks don't care about the
+    /// `--ui` flag; the tests that do build their own engine set with it enabled.
     fn engines() -> Vec<Box<dyn Engine>> {
         engines_for(&Config::default(), false)
     }
@@ -612,6 +614,7 @@ mod tests {
         assert!(out.contains("anvil-1:"));
         assert!(out.contains("anvil-2:"));
         assert!(out.contains("starknet-1:"));
+        assert!(out.contains("solana-1:"));
     }
 
     #[test]
@@ -742,10 +745,11 @@ mod tests {
     #[test]
     fn engines_returns_default_set() {
         let engines = engines();
-        assert_eq!(engines.len(), 3);
+        assert_eq!(engines.len(), 4);
         assert_eq!(engines[0].name(), "anvil-1");
         assert_eq!(engines[1].name(), "anvil-2");
         assert_eq!(engines[2].name(), "starknet-1");
+        assert_eq!(engines[3].name(), "solana-1");
     }
 
     #[test]
@@ -756,12 +760,15 @@ mod tests {
             .iter()
             .map(|e| e.manifest_entry().chain_id)
             .collect();
-        assert_eq!(ports, vec![8545, 8546, 5050]);
-        assert_eq!(chain_ids, vec!["31337", "31338", "0x534e5f5345504f4c4941"]);
+        assert_eq!(ports, vec![8545, 8546, 5050, 8899]);
+        assert_eq!(
+            chain_ids,
+            vec!["31337", "31338", "0x534e5f5345504f4c4941", "localnet"]
+        );
         // No two chains may share a host port or the compose file won't bind.
         assert_eq!(
             ports.iter().collect::<std::collections::HashSet<_>>().len(),
-            3
+            4
         );
     }
 

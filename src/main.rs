@@ -3,6 +3,7 @@
 mod evm;
 mod faucet;
 mod runtime;
+mod solana;
 mod starknet;
 #[cfg(test)]
 mod testkit;

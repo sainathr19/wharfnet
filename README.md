@@ -6,7 +6,9 @@
 > persistence — works today. A Starknet chain now **boots by default** alongside
 > the EVM ones (predeployed accounts, ETH/STRK fee tokens, baked Cairo test
 > tokens), the **faucet funds it**, its state **persists across `up --resume`**,
-> and it ships with a **built-in block explorer** too; Solana is next.
+> and it ships with a **built-in block explorer** too. A Solana chain
+> (**surfpool**) now **boots by default** as well, with deterministic funded dev
+> accounts; its faucet, SPL test tokens, persistence, and forking are landing next.
 
 `wharfnet` is the local harbor for your chains: boot EVM, Solana, and Starknet
 networks locally with a single command, fund accounts from a unified faucet,
@@ -53,10 +55,16 @@ Early WIP, but the **EVM stack works end to end today**. See the
       `--fork-network`), mirroring a live Starknet network locally
 - [x] Starknet chain control — `wharfnet starknet mine | increase-time | warp |
       impersonate` over devnet's cheat JSON-RPC
+- [x] Solana chain (`surfpool`) — boots alongside the EVM and Starknet chains
+      with deterministic, funded dev accounts, in the unified `status`/manifest
 
 **Planned**
 
-- [ ] Solana chain — validator, faucet, SPL tokens
+- [ ] Solana test tokens (SPL) at fixed addresses
+- [ ] Solana faucet — same `faucet` command funds SOL + SPL tokens
+- [ ] Solana persistence — `up --resume` / `up --reset`
+- [ ] Solana forking — `fork_url` (surfpool `--rpc-url`)
+- [ ] Solana chain control — time-travel, clock pause/resume
 
 Releases are published to crates.io from a version tag — see
 [RELEASING.md](./RELEASING.md).
@@ -383,6 +391,32 @@ Starknet chains persist across `up --resume`/`--reset` just like the EVM ones �
 see [State & persistence](#state--persistence) below. They're browsable too:
 each boots with starknet-devnet's built-in web UI explorer at `/ui` on its RPC
 port (see [Block explorer](#block-explorer)).
+
+## Solana chains
+
+`wharfnet up` also boots a [`surfpool`](https://github.com/solana-foundation/surfpool)
+Solana chain by default (`solana-1` on :8899), alongside the EVM and Starknet
+chains. surfpool runs an in-memory SVM ("surfnet") that boots in about a second
+and serves the standard Solana JSON-RPC, so the usual tooling (`solana`, `anchor`)
+points straight at it. Poke it directly:
+
+```sh
+wharfnet up --bare
+# standard Solana JSON-RPC on :8899
+curl -s -X POST http://127.0.0.1:8899 \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getHealth","params":[]}'   # -> {"result":"ok"}
+```
+
+Each Solana chain comes with **deterministic funded dev accounts** — three
+keypairs derived from documented seeds (`sha256("wharfnet-solana-dev-<i>")` →
+ed25519), so they're identical on every boot and regenerable by anyone (the
+Solana analogue of Anvil's fixed test mnemonic). They're well-known throwaway
+keys, funded with 10,000 SOL each at boot and recorded in the manifest with their
+base58 secrets, so tooling can sign as them. Readiness is checked against
+surfpool's `getHealth` RPC.
+
+SPL test tokens, the faucet, persistence, forking, and chain control are landing
+next — this first cut boots the chain and funds the dev accounts.
 
 ## State & persistence
 

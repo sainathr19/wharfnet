@@ -12,6 +12,15 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana chains** — a `surfpool` chain (`solana-1`, `:8899`) now boots **by
+  default** alongside the EVM and Starknet chains. surfpool runs an in-memory SVM
+  ("surfnet") that boots in about a second and serves the standard Solana
+  JSON-RPC, with three **deterministic funded dev accounts** (keypairs derived
+  from documented seeds, funded with 10,000 SOL each at boot) recorded in the
+  unified `status`/manifest with their base58 secrets. Readiness is gated on
+  surfpool's `getHealth` RPC. The chain kind is selectable in `wharfnet.toml`
+  with `kind = "solana"`. SPL test tokens, the faucet, persistence, forking, and
+  chain control land in follow-ups.
 - **Faster multi-chain boot** — `up` now health-checks every chain concurrently
   instead of one after another, so boot waits on the slowest chain rather than the
   sum of them.
@@ -109,6 +118,8 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Notes
 
-- EVM and Starknet chains are supported; Solana is planned.
+- EVM, Starknet, and Solana chains are supported. The Solana stack currently
+  covers boot + funded dev accounts; its faucet, SPL tokens, persistence,
+  forking, and chain control are in progress.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main
