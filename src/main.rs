@@ -3,6 +3,7 @@
 mod evm;
 mod faucet;
 mod runtime;
+mod solana;
 mod starknet;
 #[cfg(test)]
 mod testkit;
@@ -10,6 +11,7 @@ mod testkit;
 use clap::{Parser, Subcommand};
 use evm::control;
 use runtime::orchestrator;
+use solana::control as sol_control;
 use starknet::control as sn_control;
 use std::path::PathBuf;
 
@@ -67,8 +69,8 @@ enum Commands {
     },
     /// Fund an address from the built-in faucet.
     Faucet {
-        /// Target chain — a kind (`evm`, `starknet`) to fund every matching
-        /// chain, or a specific chain name (e.g. `anvil-1`, `starknet-1`).
+        /// Target chain — a kind (`evm`, `starknet`, `solana`) to fund every
+        /// matching chain, or a specific chain name (e.g. `anvil-1`, `solana-1`).
         chain: String,
         /// Recipient address.
         address: String,
@@ -94,8 +96,11 @@ enum Commands {
         #[command(subcommand)]
         command: StarknetCommands,
     },
-    /// Deploy the pre-baked test tokens and contracts.
-    Deploy,
+    /// Solana chain controls: advance slots, travel through time, pause the clock.
+    Solana {
+        #[command(subcommand)]
+        command: SolanaCommands,
+    },
 }
 
 /// EVM-specific chain controls, grouped under `wharfnet evm …`. These wrap
@@ -193,6 +198,49 @@ enum StarknetCommands {
     },
 }
 
+/// Solana-specific chain controls, grouped under `wharfnet solana …`. These wrap
+/// surfpool's `surfnet_*` cheat JSON-RPC methods. `warp` takes a Unix timestamp
+/// and is forward-only (surfpool cannot rewind); there is no `impersonate` or
+/// `snapshot`/`revert`; and `pause-clock`/`resume-clock` freeze and restart
+/// surfpool's automatic slot production for step-by-step control.
+#[derive(Subcommand)]
+enum SolanaCommands {
+    /// Advance the chain by N slots.
+    Mine {
+        /// Number of slots to advance.
+        #[arg(default_value_t = 1)]
+        count: u64,
+        /// Target chain — `solana` for every Solana chain, or a name like
+        /// `solana-1`.
+        #[arg(long, default_value = "solana")]
+        chain: String,
+    },
+    /// Fast-forward chain time by N seconds.
+    IncreaseTime {
+        /// Seconds to advance.
+        seconds: u64,
+        #[arg(long, default_value = "solana")]
+        chain: String,
+    },
+    /// Set the chain clock to an absolute Unix timestamp (forward-only).
+    Warp {
+        /// Unix timestamp in seconds.
+        timestamp: u64,
+        #[arg(long, default_value = "solana")]
+        chain: String,
+    },
+    /// Freeze automatic slot production until `resume-clock`.
+    PauseClock {
+        #[arg(long, default_value = "solana")]
+        chain: String,
+    },
+    /// Resume automatic slot production after `pause-clock`.
+    ResumeClock {
+        #[arg(long, default_value = "solana")]
+        chain: String,
+    },
+}
+
 fn main() {
     if let Err(e) = run(Cli::parse().command) {
         eprintln!("error: {e:#}");
@@ -254,7 +302,15 @@ fn run(command: Commands) -> anyhow::Result<()> {
                 chain,
             } => sn_control::impersonate(&chain, &address, stop),
         },
-        Commands::Deploy => anyhow::bail!("deploy not yet implemented"),
+        Commands::Solana { command } => match command {
+            SolanaCommands::Mine { count, chain } => sol_control::mine(&chain, count),
+            SolanaCommands::IncreaseTime { seconds, chain } => {
+                sol_control::increase_time(&chain, seconds)
+            }
+            SolanaCommands::Warp { timestamp, chain } => sol_control::warp(&chain, timestamp),
+            SolanaCommands::PauseClock { chain } => sol_control::pause_clock(&chain),
+            SolanaCommands::ResumeClock { chain } => sol_control::resume_clock(&chain),
+        },
     }
 }
 
@@ -495,6 +551,49 @@ mod tests {
     }
 
     #[test]
+    fn parses_solana_control_commands() {
+        // `solana mine`: count defaults to 1, chain defaults to solana.
+        let cli = Cli::try_parse_from(["wharfnet", "solana", "mine"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Solana {
+                command: SolanaCommands::Mine { count: 1, ref chain }
+            } if chain == "solana"
+        ));
+
+        // `solana warp <ts> --chain <name>`
+        let cli = Cli::try_parse_from([
+            "wharfnet",
+            "solana",
+            "warp",
+            "2000000000",
+            "--chain",
+            "solana-1",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Solana {
+                command: SolanaCommands::Warp { timestamp: 2_000_000_000, ref chain }
+            } if chain == "solana-1"
+        ));
+
+        // `solana pause-clock` / `resume-clock` take no positional args.
+        let cli = Cli::try_parse_from(["wharfnet", "solana", "pause-clock"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Solana {
+                command: SolanaCommands::PauseClock { ref chain }
+            } if chain == "solana"
+        ));
+        assert!(Cli::try_parse_from(["wharfnet", "solana", "resume-clock"]).is_ok());
+
+        // There's no impersonate/snapshot under solana (no surfpool analogue).
+        assert!(Cli::try_parse_from(["wharfnet", "solana", "impersonate", "x"]).is_err());
+        assert!(Cli::try_parse_from(["wharfnet", "solana", "snapshot"]).is_err());
+    }
+
+    #[test]
     fn unknown_command_fails_to_parse() {
         assert!(Cli::try_parse_from(["wharfnet", "teleport"]).is_err());
     }
@@ -515,11 +614,6 @@ mod tests {
             })
             .is_ok()
         );
-    }
-
-    #[test]
-    fn run_deploy_is_unimplemented_error() {
-        assert!(run(Commands::Deploy).is_err());
     }
 
     /// Full lifecycle through the public dispatch. Covers `run`'s Up/Down/Status

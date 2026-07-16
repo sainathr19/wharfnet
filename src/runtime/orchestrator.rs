@@ -5,7 +5,7 @@
 //! the `_in` variants take them as parameters so they can be driven against an
 //! isolated temp dir in tests.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
@@ -20,6 +20,7 @@ use super::engine::{Engine, HealthProbe, StateMode};
 use super::manifest::Manifest;
 use super::ui;
 use crate::evm::engine::EvmEngine;
+use crate::solana::engine::SolanaEngine;
 use crate::starknet::engine::StarknetEngine;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
@@ -71,9 +72,9 @@ pub(crate) fn manifest_path(base: &Path) -> PathBuf {
 /// fail; it's an internal invariant, not user-facing validation.
 ///
 /// `explorer` mirrors the caller's explorer preference (`up` on, `up --bare`
-/// off). EVM chains pair with a separate Otterscan container built later, but a
-/// Starknet chain serves its explorer in-process, so the flag is baked into the
-/// engine here to reach its `--ui` compose arg.
+/// off). EVM chains pair with a separate Otterscan container built later, but
+/// Starknet and Solana chains serve their explorer in-process, so the flag is
+/// baked into the engine here to reach its `--ui` / `--studio-port` compose arg.
 fn engines_for(config: &Config, explorer: bool) -> Vec<Box<dyn Engine>> {
     config
         .chains
@@ -101,6 +102,14 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
             let mut engine = StarknetEngine::devnet(&c.name, c.port).ui(explorer);
             if let Some(url) = &c.fork_url {
                 engine = engine.fork(url.clone(), c.fork_block);
+            }
+            Box::new(engine)
+        }
+        "solana" => {
+            let mut engine = SolanaEngine::surfpool(&c.name, c.port).studio(explorer);
+            if let Some(url) = &c.fork_url {
+                // surfpool takes no fork slot; config rejects fork_block on Solana.
+                engine = engine.fork(url.clone());
             }
             Box::new(engine)
         }
@@ -158,7 +167,13 @@ fn explorer_services(engines: &[Box<dyn Engine>]) -> Vec<ExplorerService> {
 /// that range would otherwise surface only as a cryptic docker bind failure.
 fn check_ports(engines: &[Box<dyn Engine>], explorers: &[ExplorerService]) -> Result<()> {
     let mut seen = HashSet::new();
-    let ports = engines.iter().map(|e| (e.host_port(), e.name())).chain(
+    // A chain's RPC port plus any extra host ports it publishes (e.g. an
+    // in-process explorer served on its own port, like surfpool's Studio).
+    let chain_ports = engines.iter().flat_map(|e| {
+        std::iter::once((e.host_port(), e.name()))
+            .chain(e.extra_host_ports().into_iter().map(move |p| (p, e.name())))
+    });
+    let ports = chain_ports.chain(
         explorers
             .iter()
             .map(|s| (s.host_port, s.service_name.clone())),
@@ -260,7 +275,10 @@ fn has_saved_session(base: &Path) -> bool {
 }
 
 fn is_session_file(name: &str) -> bool {
-    name.starts_with("session-") && name.ends_with(".json")
+    // Anvil/devnet dump a `session-<chain>.json`; surfpool persists a
+    // `session-<chain>.sqlite` (plus its `-wal`/`-shm` sidecars). Both are
+    // per-chain saved sessions the resume/reset machinery keys off.
+    name.starts_with("session-") && (name.ends_with(".json") || name.contains(".sqlite"))
 }
 
 /// Print the generated compose file to stdout without booting anything.
@@ -396,6 +414,15 @@ pub(crate) fn up_in(
         );
     }
 
+    // Run any post-boot setup now the chains answer RPC — e.g. surfpool seeds its
+    // SPL test tokens through cheatcodes. A no-op for engines that bake their
+    // state at boot (Anvil, starknet-devnet), so this is cheap in the common case.
+    for engine in &engines {
+        engine
+            .post_boot()
+            .with_context(|| format!("post-boot setup for chain '{}'", engine.name()))?;
+    }
+
     let mut entries: Vec<_> = engines.iter().map(|e| e.manifest_entry()).collect();
     for svc in &explorers {
         if let Some(entry) = entries.iter_mut().find(|c| c.name == svc.chain_name) {
@@ -414,6 +441,9 @@ pub(crate) fn up_in(
             "   {} [{}]  {}  (chainId {})",
             chain.name, chain.kind, chain.rpc, chain.chain_id
         );
+        if let Some(ws) = &chain.ws {
+            println!("      ws        {ws}");
+        }
         if let Some(fork) = &chain.fork {
             println!("      fork      {fork}");
         }
@@ -508,6 +538,9 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
     for chain in &manifest.chains {
         println!("  {} [{}]", chain.name, chain.kind);
         println!("     rpc      {}", chain.rpc);
+        if let Some(ws) = &chain.ws {
+            println!("     ws       {ws}");
+        }
         println!("     chainId  {}", chain.chain_id);
         if let Some(account) = chain.accounts.first() {
             println!("     account  {}", account.address);
@@ -597,9 +630,9 @@ mod tests {
     use std::net::TcpListener;
     use tempfile::tempdir;
 
-    /// The default engine set (two Anvil chains + one Starknet chain), with
-    /// explorers off — the generic checks don't care about the `--ui` flag; the
-    /// tests that do build their own engine set with it enabled.
+    /// The default engine set (two Anvil chains, one Starknet chain, one Solana
+    /// chain), with explorers off — the generic checks don't care about the
+    /// `--ui` flag; the tests that do build their own engine set with it enabled.
     fn engines() -> Vec<Box<dyn Engine>> {
         engines_for(&Config::default(), false)
     }
@@ -612,6 +645,7 @@ mod tests {
         assert!(out.contains("anvil-1:"));
         assert!(out.contains("anvil-2:"));
         assert!(out.contains("starknet-1:"));
+        assert!(out.contains("solana-1:"));
     }
 
     #[test]
@@ -707,6 +741,71 @@ mod tests {
     }
 
     #[test]
+    fn explorer_flag_enables_the_solana_studio_and_bare_disables_it() {
+        // With the explorer on, the Solana chain serves surfpool's in-process
+        // Studio and publishes it on a second host port (RPC port + 10000).
+        let out = render_compose(
+            &engines_for(&Config::default(), true),
+            StateMode::Ephemeral,
+            &[],
+        );
+        assert!(
+            out.contains("\"--studio-port\", \"18488\""),
+            "explorer on → surfpool serves Studio: {out}"
+        );
+        assert!(
+            out.contains("\"18899:18488\""),
+            "explorer on → Studio port is published (solana-1 on 8899): {out}"
+        );
+
+        // `up --bare` (explorer off) disables Studio and publishes no extra port.
+        let bare = render_compose(
+            &engines_for(&Config::default(), false),
+            StateMode::Ephemeral,
+            &[],
+        );
+        assert!(
+            bare.contains("\"--no-studio\""),
+            "bare must disable Studio: {bare}"
+        );
+        assert!(
+            !bare.contains("18899"),
+            "bare must not publish a Studio port: {bare}"
+        );
+    }
+
+    #[test]
+    fn check_ports_rejects_a_chain_port_that_collides_with_a_solana_studio() {
+        // A chain published on another Solana chain's Studio host port (RPC +
+        // 10000) clashes — caught here rather than as a cryptic docker bind error.
+        let config = Config {
+            chains: vec![
+                config::ChainConfig {
+                    name: "solana-a".into(),
+                    kind: "solana".into(),
+                    port: 8899,
+                    chain_id: None,
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+                config::ChainConfig {
+                    name: "evm-x".into(),
+                    kind: "evm".into(),
+                    port: 18899, // == solana-a's Studio port
+                    chain_id: Some("31337".into()),
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+            ],
+        };
+        let engines = engines_for(&config, true);
+        let err = check_ports(&engines, &[]).unwrap_err();
+        assert!(err.to_string().contains("more than one service"), "{err}");
+    }
+
+    #[test]
     fn render_compose_appends_explorer_services_when_requested() {
         let engines = engines();
         let svcs = explorer_services(&engines);
@@ -742,10 +841,11 @@ mod tests {
     #[test]
     fn engines_returns_default_set() {
         let engines = engines();
-        assert_eq!(engines.len(), 3);
+        assert_eq!(engines.len(), 4);
         assert_eq!(engines[0].name(), "anvil-1");
         assert_eq!(engines[1].name(), "anvil-2");
         assert_eq!(engines[2].name(), "starknet-1");
+        assert_eq!(engines[3].name(), "solana-1");
     }
 
     #[test]
@@ -756,12 +856,15 @@ mod tests {
             .iter()
             .map(|e| e.manifest_entry().chain_id)
             .collect();
-        assert_eq!(ports, vec![8545, 8546, 5050]);
-        assert_eq!(chain_ids, vec!["31337", "31338", "0x534e5f5345504f4c4941"]);
+        assert_eq!(ports, vec![8545, 8546, 5050, 8899]);
+        assert_eq!(
+            chain_ids,
+            vec!["31337", "31338", "0x534e5f5345504f4c4941", "localnet"]
+        );
         // No two chains may share a host port or the compose file won't bind.
         assert_eq!(
             ports.iter().collect::<std::collections::HashSet<_>>().len(),
-            3
+            4
         );
     }
 
@@ -808,6 +911,10 @@ mod tests {
         fs::create_dir_all(&state).unwrap();
         fs::write(state.join("session-anvil-1.json"), "a").unwrap();
         fs::write(state.join("session-anvil-2.json"), "b").unwrap();
+        // A surfpool Solana session is a SQLite db plus its WAL sidecars.
+        fs::write(state.join("session-solana-1.sqlite"), "db").unwrap();
+        fs::write(state.join("session-solana-1.sqlite-wal"), "wal").unwrap();
+        fs::write(state.join("session-solana-1.sqlite-shm"), "shm").unwrap();
         fs::write(state.join("anvil-tokens.json"), "baked").unwrap();
 
         assert!(has_saved_session(dir.path()));
@@ -817,6 +924,10 @@ mod tests {
         assert!(state.join("anvil-tokens.json").exists());
         assert!(!state.join("session-anvil-1.json").exists());
         assert!(!state.join("session-anvil-2.json").exists());
+        // The Solana db and both sidecars are cleared.
+        assert!(!state.join("session-solana-1.sqlite").exists());
+        assert!(!state.join("session-solana-1.sqlite-wal").exists());
+        assert!(!state.join("session-solana-1.sqlite-shm").exists());
     }
 
     #[test]
@@ -853,6 +964,7 @@ mod tests {
             name: "anvil-1".into(),
             kind: "evm".into(),
             rpc: "http://127.0.0.1:8545".into(),
+            ws: None,
             chain_id: "31337".into(),
             accounts: vec![Account {
                 address: "0xabc".into(),

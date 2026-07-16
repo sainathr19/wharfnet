@@ -234,6 +234,9 @@ impl Engine for EvmEngine {
             name: self.name.clone(),
             kind: "evm".to_string(),
             rpc: format!("http://127.0.0.1:{}", self.host_port),
+            // Anvil serves WS on the same port as HTTP, so it's derivable from
+            // `rpc`; no distinct WS endpoint to advertise.
+            ws: None,
             chain_id: self.chain_id.to_string(),
             accounts: Self::accounts(),
             tokens: if forked { Vec::new() } else { Self::tokens() },

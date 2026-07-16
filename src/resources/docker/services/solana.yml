@@ -1,0 +1,17 @@
+  {{NAME}}:
+    image: {{IMAGE}}
+    # The image entrypoint runs `surfpool "$@"`, so these are surfpool args.
+    # `start --no-tui` is required for headless (non-interactive) operation.
+    # The datasource args are `--offline` for a standalone local chain, or
+    # `--rpc-url <url>` when forking. The WebSocket RPC (`--ws-port`) is always
+    # served and published (subscriptions / confirmTransaction ride it). Boot
+    # airdrops seed the dev accounts; state (persistence) and the Studio explorer
+    # slot in at the end — the latter as `--no-studio` (off) or `--studio-port`
+    # (on); when on, a second published port mapping (below) exposes Studio.
+    command: ["start", "--no-tui", "--host", "0.0.0.0", "--port", "{{PORT}}", "--ws-port", "{{WS_PORT}}"{{DATASOURCE_ARGS}}{{AIRDROP_ARGS}}{{STATE_ARGS}}{{STUDIO_ARGS}}]
+    ports:
+      - "{{HOST_PORT}}:{{PORT}}"
+      - "{{WS_HOST_PORT}}:{{WS_PORT}}"{{STUDIO_PORT_MAPPING}}
+    volumes:
+      - "./state:/state"
+    restart: unless-stopped

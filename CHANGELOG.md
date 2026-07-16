@@ -12,6 +12,68 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana WebSocket RPC** — surfpool's WebSocket endpoint is now published, so
+  subscriptions (`slotSubscribe`, `logsSubscribe`) and `confirmTransaction` work
+  from the host (previously only the HTTP RPC on 8899 was mapped). It's published
+  on the HTTP RPC port **+ 1** (`solana-1` on 8899 → WS on 8900), following
+  Solana's own convention — clients like `@solana/web3.js` derive the WS URL from
+  the RPC URL, so they connect automatically. Always served (not gated by
+  `--bare`), advertised via a new `ws` field in the `status`/manifest, and folded
+  into the cross-chain port collision check.
+- **Solana block explorer** — every Solana chain now serves surfpool's built-in
+  **Studio** UI, on by default (skipped by `up --bare`), matching the EVM
+  (Otterscan) and Starknet (`--ui`) explorers. Unlike the Starknet UI — served at
+  `/ui` on the RPC port — surfpool runs Studio as a separate in-container service,
+  so wharfnet publishes it on the chain's RPC port **+ 10000** (`solana-1` on 8899
+  → Studio on 18899) via a second port mapping, and records the URL in the unified
+  `status`/manifest. The extra host port is folded into the cross-chain collision
+  check so it can't silently clash with another chain's port.
+- **Solana persistence** — `up --resume` / `up --reset` now cover Solana chains
+  too. Each persists to its own `session-<chain>.sqlite` surfnet database via
+  surfpool's `--db`/`--surfnet-id`, so balances, mints, and transactions survive
+  `down` → `up --resume` and are wiped by `up --reset` — matching the EVM and
+  Starknet chains. Because the SPL test tokens are seeded via cheatcodes rather
+  than a baked file, a resumed chain detects they're already present and skips
+  re-seeding, so it never clobbers your balances.
+- **Solana forking** — the `fork_url` field now works on Solana chains, booting
+  them as a **copy-on-read** fork of a live network via surfpool's `--rpc-url`, so
+  you can test against real accounts and programs locally. `${VAR}` expansion and
+  URL redaction are shared with the EVM/Starknet paths; a forked chain mirrors
+  live state, so it seeds none of the baked SPL test tokens (the dev accounts are
+  still airdropped over the fork). Unlike the EVM/Starknet forks, **`fork_block`
+  is unsupported** — surfpool has no fork-at-slot flag — and is rejected on load.
+- **Solana faucet** — the same `faucet <chain> <address> [amount] [--token]`
+  command funds Solana addresses: native SOL through the standard `requestAirdrop`
+  RPC, and the SPL test tokens through surfpool's `surfnet_setTokenAccount` cheat
+  (the recipient needs no key). `--token SOL` funds only the native coin. Amounts
+  are decimal (scaled by decimals) or exact base units with `--raw`, and funding
+  is additive — SPL top-ups read the current balance first — matching the
+  EVM/Starknet funders.
+- **Solana test tokens** — every Solana chain now boots with standard SPL test
+  tokens (USDC, WBTC) at fixed, deterministic mint addresses, seeded onto the dev
+  accounts. Unlike the EVM/Starknet stacks — which load a baked state file —
+  surfpool has no program to deploy for SPL, so wharfnet creates the mints
+  (`surfnet_setAccount` with a hand-built SPL Mint) and funds the accounts
+  (`surfnet_setTokenAccount`) via cheatcodes the moment the RPC is live, through a
+  new post-boot engine hook. The mints are listed in the unified `status`/manifest.
+  "Weird" Token-2022 test tokens (transfer-fee, interest-bearing) are a follow-up.
+- **Solana chain control** — `wharfnet solana mine`, `increase-time`, `warp`,
+  `pause-clock`, and `resume-clock` wrap surfpool's `surfnet_*` cheat JSON-RPC to
+  drive a running chain, grouped under `solana` so each chain kind owns its own
+  verbs. Differences from the EVM/Starknet controls, all from surfpool: `mine`
+  advances slots (Solana's block cadence); `warp` is forward-only (surfpool can't
+  rewind); there's no `impersonate`/`snapshot`/`revert`; and `pause-clock`/
+  `resume-clock` freeze and restart surfpool's automatic slot production for
+  step-by-step control.
+- **Solana chains** — a `surfpool` chain (`solana-1`, `:8899`) now boots **by
+  default** alongside the EVM and Starknet chains. surfpool runs an in-memory SVM
+  ("surfnet") that boots in about a second and serves the standard Solana
+  JSON-RPC, with three **deterministic funded dev accounts** (keypairs derived
+  from documented seeds, funded with 10,000 SOL each at boot) recorded in the
+  unified `status`/manifest with their base58 secrets. Readiness is gated on
+  surfpool's `getHealth` RPC. The chain kind is selectable in `wharfnet.toml`
+  with `kind = "solana"`. SPL test tokens, the faucet, persistence, forking, and
+  chain control land in follow-ups.
 - **Faster multi-chain boot** — `up` now health-checks every chain concurrently
   instead of one after another, so boot waits on the slowest chain rather than the
   sum of them.
@@ -105,11 +167,12 @@ under _Unreleased_ and the CLI surface may still change.
   chainId `31337`) via Docker Compose and writes an endpoints manifest: one
   command to a running EVM localnet.
 - **CLI scaffold** — Rust/`clap` command surface (`up`, `down`, `status`,
-  `compose`, `faucet`, `deploy`) that everything else builds on.
+  `compose`, `faucet`) that everything else builds on.
 
 ### Notes
 
-- `deploy` is scaffolded but not yet implemented.
-- EVM and Starknet chains are supported; Solana is planned.
+- EVM, Starknet, and Solana chains are supported. The Solana stack currently
+  covers boot, funded dev accounts, chain control, SPL test tokens, the faucet,
+  forking, and persistence; weird Token-2022 tokens are the main piece left.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/commits/main

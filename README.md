@@ -6,7 +6,10 @@
 > persistence — works today. A Starknet chain now **boots by default** alongside
 > the EVM ones (predeployed accounts, ETH/STRK fee tokens, baked Cairo test
 > tokens), the **faucet funds it**, its state **persists across `up --resume`**,
-> and it ships with a **built-in block explorer** too; Solana is next.
+> and it ships with a **built-in block explorer** too. A Solana chain
+> (**surfpool**) now **boots by default** as well, with deterministic funded dev
+> accounts, SPL test tokens, a **faucet**, **persistence**, **forking**, and its
+> own **built-in Studio explorer**.
 
 `wharfnet` is the local harbor for your chains: boot EVM, Solana, and Starknet
 networks locally with a single command, fund accounts from a unified faucet,
@@ -53,12 +56,27 @@ Early WIP, but the **EVM stack works end to end today**. See the
       `--fork-network`), mirroring a live Starknet network locally
 - [x] Starknet chain control — `wharfnet starknet mine | increase-time | warp |
       impersonate` over devnet's cheat JSON-RPC
+- [x] Solana chain (`surfpool`) — boots alongside the EVM and Starknet chains
+      with deterministic, funded dev accounts, in the unified `status`/manifest
+- [x] Solana chain control — `wharfnet solana mine | increase-time | warp |
+      pause-clock | resume-clock` over surfpool's cheat JSON-RPC
+- [x] Solana test tokens — USDC/WBTC SPL mints at fixed addresses, seeded to the
+      dev accounts (created via cheatcodes at boot — no program to deploy)
+- [x] Solana faucet — `wharfnet faucet solana` airdrops SOL and tops up the SPL
+      tokens (additive, no key needed)
+- [x] Solana forking — `fork_url` per chain (surfpool `--rpc-url`, copy-on-read);
+      no `fork_block` (surfpool has no fork-at-slot)
+- [x] Solana persistence — `up --resume` / `up --reset` keep (or discard) a
+      Solana chain's state across restarts, like the EVM/Starknet chains
+- [x] Solana block explorer — surfpool's built-in Studio UI, on by default,
+      served in-process on its own published port
+- [x] Solana WebSocket RPC — surfpool's WS endpoint published on the RPC port + 1
+      (Solana's convention), so subscriptions / `confirmTransaction` work from the
+      host; advertised in `status`/manifest
 
 **Planned**
 
-- [ ] Solana chain — validator, faucet, SPL tokens
-- [ ] `deploy` command — deploy bundled/custom contracts on demand
-- [ ] CI polish — machine-readable `status --json`, non-interactive mode
+- [ ] Solana "weird" test tokens (Token-2022 transfer-fee, interest-bearing)
 
 Releases are published to crates.io from a version tag — see
 [RELEASING.md](./RELEASING.md).
@@ -111,8 +129,8 @@ wharfnet faucet anvil-1 0xabc... 100 --token USDC
 wharfnet faucet starknet 0x05a1... 100
 wharfnet faucet starknet-1 0x05a1... 50 --token WBTC
 
-# deploy bundled/custom contracts (planned — not yet implemented)
-wharfnet deploy
+# stream container logs (all, or one chain/kind; -f to follow)
+wharfnet logs starknet-1 -f
 
 # shut everything down
 wharfnet down
@@ -210,6 +228,23 @@ fork_block = 900000            # optional; omit to track the latest block
 The predeployed dev accounts still apply (devnet funds them over the fork), so
 you can send transactions against real forked state right away.
 
+**Solana chains fork the same way** — set `fork_url` on a `kind = "solana"` chain
+and surfpool boots as a **copy-on-read** fork of that network, fetching accounts
+from the source RPC on first access. The predeployed dev accounts are still
+airdropped over the fork, so you have funded signers immediately.
+
+```toml
+[[chains]]
+name = "sol-fork"
+kind = "solana"
+port = 8899
+fork_url = "${SOLANA_RPC}"   # a Solana JSON-RPC endpoint (e.g. mainnet-beta)
+```
+
+One difference: **`fork_block` is not supported for Solana** — surfpool has no
+fork-at-slot flag, so a Solana fork always tracks the datasource's current slot.
+Setting `fork_block` on a `kind = "solana"` chain is rejected on load.
+
 ## Test tokens
 
 Every EVM chain boots with test tokens pre-deployed at fixed addresses
@@ -261,19 +296,22 @@ wharfnet up --bare   # chains only
 
 Anvil implements Otterscan's RPC API (`ots_*`), so the explorer needs no indexer
 or database — it's a static frontend talking straight to the chain. Each EVM
-chain gets its own Otterscan on a dedicated port. **Starknet** chains use
-starknet-devnet's own built-in web UI instead (Otterscan is EVM-only): it's
-served in-process at `/ui` on the chain's own RPC port, so there's no extra
-container or port. Every explorer URL is recorded in the manifest and printed by
-`status`:
+chain gets its own Otterscan on a dedicated port. **Starknet** and **Solana**
+chains instead use their engine's own built-in web UI (Otterscan is EVM-only),
+served in-process — no extra container. starknet-devnet serves its UI at `/ui`
+on the chain's own RPC port; surfpool's **Studio** is a separate service, so
+wharfnet publishes it on the chain's RPC port **+ 10000** (e.g. `solana-1` on
+8899 → Studio on 18899). Every explorer URL is recorded in the manifest and
+printed by `status`:
 
 | Chain      | RPC                         | Explorer                    |
 | ---------- | --------------------------- | --------------------------- |
 | anvil-1    | `http://127.0.0.1:8545`     | `http://127.0.0.1:5100`     |
 | anvil-2    | `http://127.0.0.1:8546`     | `http://127.0.0.1:5101`     |
 | starknet-1 | `http://127.0.0.1:5050/rpc` | `http://127.0.0.1:5050/ui`  |
+| solana-1   | `http://127.0.0.1:8899`     | `http://127.0.0.1:18899`    |
 
-`--bare` skips both the Otterscan containers and devnet's `--ui`.
+`--bare` skips the Otterscan containers, devnet's `--ui`, and surfpool's Studio.
 
 ## EVM chain control
 
@@ -315,6 +353,28 @@ Two differences from the EVM verbs, both from starknet-devnet: there's **no
 abort), and **`impersonate` works only on a forked chain** — devnet impersonates
 accounts that exist on the forked origin, so on a plain local chain the command
 is refused with a hint to set `fork_url` first.
+
+## Solana chain control
+
+The Solana equivalents live under `wharfnet solana`, wrapping surfpool's
+`surfnet_*` cheat JSON-RPC. Each takes a `--chain` selector (`solana` for every
+Solana chain, or a name like `solana-1`; defaults to `solana`):
+
+```sh
+wharfnet solana mine 10                # advance the chain by 10 slots
+wharfnet solana increase-time 86400    # fast-forward time by a day
+wharfnet solana warp 1893456000        # set the clock to an absolute Unix time
+wharfnet solana pause-clock            # freeze automatic slot production
+wharfnet solana resume-clock           # resume it
+```
+
+Differences from the EVM/Starknet verbs, all from surfpool's design: `mine`
+advances **slots** (Solana's block cadence) rather than mining discrete blocks;
+`warp` is **forward-only** (surfpool can't rewind, so a past target is refused);
+there's **no `impersonate` or `snapshot`/`revert`** (set account state directly
+via cheatcodes instead); and `pause-clock`/`resume-clock` are surfpool extras —
+surfpool auto-produces slots on a timer, so pausing gives you deterministic,
+step-by-step control (`mine` while paused advances exactly N slots).
 
 ## Starknet chains
 
@@ -386,6 +446,82 @@ see [State & persistence](#state--persistence) below. They're browsable too:
 each boots with starknet-devnet's built-in web UI explorer at `/ui` on its RPC
 port (see [Block explorer](#block-explorer)).
 
+## Solana chains
+
+`wharfnet up` also boots a [`surfpool`](https://github.com/solana-foundation/surfpool)
+Solana chain by default (`solana-1` on :8899), alongside the EVM and Starknet
+chains. surfpool runs an in-memory SVM ("surfnet") that boots in about a second
+and serves the standard Solana JSON-RPC, so the usual tooling (`solana`, `anchor`)
+points straight at it. Poke it directly:
+
+```sh
+wharfnet up --bare
+# standard Solana JSON-RPC on :8899, WebSocket RPC on :8900
+curl -s -X POST http://127.0.0.1:8899 \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getHealth","params":[]}'   # -> {"result":"ok"}
+```
+
+The **WebSocket RPC** is published on the HTTP RPC port + 1 (`solana-1` → `ws://127.0.0.1:8900`),
+following Solana's own convention, so clients like `@solana/web3.js` that derive
+the WS URL from the RPC URL just work — subscriptions (`slotSubscribe`,
+`logsSubscribe`) and `confirmTransaction` all run against the host. It's always
+served (not gated by `--bare`) and recorded in the manifest.
+
+Each Solana chain comes with **deterministic funded dev accounts** — three
+keypairs derived from documented seeds (`sha256("wharfnet-solana-dev-<i>")` →
+ed25519), so they're identical on every boot and regenerable by anyone (the
+Solana analogue of Anvil's fixed test mnemonic). They're well-known throwaway
+keys, funded with 10,000 SOL each at boot and recorded in the manifest with their
+base58 secrets, so tooling can sign as them. Readiness is checked against
+surfpool's `getHealth` RPC.
+
+Each Solana chain also serves surfpool's built-in **Studio** explorer, published
+on its RPC port + 10000 (`solana-1` → `http://127.0.0.1:18899`) and recorded in
+the manifest; `up --bare` skips it (see [Block explorer](#block-explorer)).
+
+### Solana test tokens
+
+Every Solana chain also boots with standard **SPL test tokens** at fixed mint
+addresses (identical on every chain), each seeded onto the dev accounts:
+
+| Token | Decimals | Mint address                                   |
+| ----- | -------- | ---------------------------------------------- |
+| USDC  | 6        | `94C6wFGeVr5SahK9owBMBhpFPRtvLuZhQQVRh7NYrEp9` |
+| WBTC  | 8        | `Fp7Dnb8KKkWWw5RfUPsQBNRrooj75gbNaWoC28AnCn3E` |
+
+Unlike the EVM/Starknet stacks — which bake a state file the node loads at boot —
+surfpool needs no program to deploy (the SPL Token program is native), so wharfnet
+seeds these at runtime the moment the chain is ready: it creates each mint with
+surfpool's `surfnet_setAccount` cheat and funds the dev accounts with
+`surfnet_setTokenAccount`. The mint addresses are deterministic (ed25519 of
+`sha256("wharfnet-solana-mint-<symbol>")`) and their mint authority is dev account 0.
+
+### Funding a Solana address
+
+The unified `faucet` command works on Solana chains too:
+
+```bash
+# SOL + every SPL token, on every Solana chain
+wharfnet faucet solana 9WzD…AWWM 100
+
+# just one token, on a specific chain
+wharfnet faucet solana-1 9WzD…AWWM 50 --token WBTC
+
+# just native SOL
+wharfnet faucet solana-1 9WzD…AWWM 5 --token SOL
+```
+
+SOL is credited with the standard `requestAirdrop` RPC; the SPL tokens are topped
+up with surfpool's `surfnet_setTokenAccount` cheat (the recipient needs no key).
+Amounts are decimal (scaled by each token's decimals) or exact base units with
+`--raw`. Funding is additive, so repeat top-ups accumulate.
+
+Solana chains fork the same way as the EVM/Starknet ones (see
+[Mainnet forking](#mainnet-forking)), persist across `up --resume`/`--reset` (see
+[State & persistence](#state--persistence)), and their
+[chain-control commands](#solana-chain-control) work today; "weird" Token-2022
+test tokens (transfer-fee, interest-bearing) are landing next.
+
 ## State & persistence
 
 By default `wharfnet up` boots a **fresh, deterministic** network every time:
@@ -401,11 +537,12 @@ When you'd rather pick up where you left off:
 | `wharfnet up --resume` | Restore the previous session if one exists (else fresh), and **keep saving** — balances, txs, and deployments survive `down` → `up --resume`. |
 | `wharfnet up --reset` | Discard any saved session, then boot fresh. |
 
-Under the hood each chain continuously dumps its state to a per-chain snapshot
-(`.wharfnet/state/session-<chain>.json`) that it reloads on the next `--resume`:
-EVM chains use Anvil's `--state`, and Starknet chains dump the devnet replay log
-on every block (one per transaction). `--resume` and `--reset` are mutually
-exclusive.
+Under the hood each chain persists to a per-chain session under
+`.wharfnet/state/` that it reloads on the next `--resume`: EVM chains use Anvil's
+`--state` (`session-<chain>.json`), Starknet chains dump the devnet replay log on
+every block (one per transaction), and Solana chains write a surfnet SQLite db
+(`session-<chain>.sqlite`) via surfpool's `--db`. `--resume` and `--reset` are
+mutually exclusive.
 
 ## License
 

@@ -2,11 +2,11 @@
 //!
 //! When a `wharfnet.toml` is present in the working directory it defines the
 //! chain topology — which chains to boot and their ports, chain IDs, and block
-//! times. Without one, the built-in defaults are used (two Anvil EVM chains), so
-//! wharfnet stays zero-config.
+//! times. Without one, the built-in defaults are used (two Anvil EVM chains, a
+//! Starknet chain, and a Solana chain), so wharfnet stays zero-config.
 //!
-//! Accounts and test tokens are not configurable here: they come from the baked
-//! Anvil state snapshot (see `engine.rs`).
+//! Accounts and test tokens are not configurable here: they come from each
+//! engine's baked state (see the per-kind `engine.rs`).
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -70,7 +70,8 @@ pub struct Config {
 pub struct ChainConfig {
     /// Service / container name, e.g. "anvil-1".
     pub name: String,
-    /// Chain kind: "evm" (Anvil) or "starknet" (starknet-devnet).
+    /// Chain kind: "evm" (Anvil), "starknet" (starknet-devnet), or "solana"
+    /// (surfpool).
     #[serde(default = "default_kind")]
     pub kind: String,
     /// Published host port for the RPC.
@@ -125,6 +126,16 @@ impl Default for Config {
                     kind: "starknet".to_string(),
                     port: 5050,
                     // Starknet uses devnet's default chain id (SN_SEPOLIA).
+                    chain_id: None,
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+                ChainConfig {
+                    name: "solana-1".to_string(),
+                    kind: "solana".to_string(),
+                    port: 8899,
+                    // Solana uses surfpool's local surfnet identity ("localnet").
                     chain_id: None,
                     block_time: 1,
                     fork_url: None,
@@ -271,8 +282,21 @@ fn validate(config: &Config) -> Result<()> {
                 // `--fork-network` (the shared `fork_url`/`fork_block` fields, with
                 // the generic `fork_block needs a fork_url` check below).
             }
+            "solana" => {
+                // Solana chains run surfpool's local surfnet, identified as
+                // "localnet", so no chain_id is required (like Starknet). Forking
+                // is supported via surfpool's `--rpc-url` (the shared `fork_url`
+                // field), but surfpool has no fork-at-slot flag, so `fork_block`
+                // can't be honored — reject it rather than silently ignore it.
+                if c.fork_block.is_some() {
+                    bail!(
+                        "chain '{}': surfpool cannot pin a Solana fork to a block/slot — remove fork_block",
+                        c.name
+                    );
+                }
+            }
             other => bail!(
-                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet)",
+                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet, solana)",
                 c.name
             ),
         }
@@ -309,9 +333,9 @@ mod tests {
     }
 
     #[test]
-    fn default_is_two_anvil_chains_and_a_starknet_chain() {
+    fn default_is_two_anvil_a_starknet_and_a_solana_chain() {
         let c = Config::default();
-        assert_eq!(c.chains.len(), 3);
+        assert_eq!(c.chains.len(), 4);
         assert_eq!(c.chains[0].name, "anvil-1");
         assert_eq!(c.chains[0].port, 8545);
         assert_eq!(c.chains[1].chain_id.as_deref(), Some("31338"));
@@ -320,13 +344,18 @@ mod tests {
         assert_eq!(c.chains[2].kind, "starknet");
         assert_eq!(c.chains[2].port, 5050);
         assert!(c.chains[2].chain_id.is_none());
+        // The Solana chain is on by default too; it also carries no chain_id.
+        assert_eq!(c.chains[3].name, "solana-1");
+        assert_eq!(c.chains[3].kind, "solana");
+        assert_eq!(c.chains[3].port, 8899);
+        assert!(c.chains[3].chain_id.is_none());
     }
 
     #[test]
     fn missing_file_yields_defaults() {
         let dir = tempdir().unwrap();
         let c = load_from(&dir.path().join(CONFIG_FILE)).unwrap();
-        assert_eq!(c.chains.len(), 3);
+        assert_eq!(c.chains.len(), 4);
     }
 
     #[test]
@@ -533,14 +562,74 @@ mod tests {
             &dir,
             r#"
             [[chains]]
-            name = "sol"
-            kind = "solana"
+            name = "apt"
+            kind = "aptos"
             port = 8899
             chain_id = 1
             "#,
         );
         let err = load_from(&path).unwrap_err();
         assert!(err.to_string().contains("not supported yet"), "{err}");
+    }
+
+    #[test]
+    fn accepts_solana_kind_without_a_chain_id() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "solana-1"
+            kind = "solana"
+            port = 8899
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].kind, "solana");
+        // Solana uses surfpool's local surfnet identity, so none is required.
+        assert!(c.chains[0].chain_id.is_none());
+    }
+
+    #[test]
+    fn solana_accepts_a_fork_url() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "solana-1"
+            kind = "solana"
+            port = 8899
+            fork_url = "https://api.mainnet-beta.solana.com"
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(
+            c.chains[0].fork_url.as_deref(),
+            Some("https://api.mainnet-beta.solana.com")
+        );
+    }
+
+    #[test]
+    fn solana_rejects_fork_block() {
+        let dir = tempdir().unwrap();
+        // surfpool has no fork-at-slot flag, so pinning a Solana fork is refused.
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "solana-1"
+            kind = "solana"
+            port = 8899
+            fork_url = "https://api.mainnet-beta.solana.com"
+            fork_block = 250000000
+            "#,
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("cannot pin a Solana fork"),
+            "{err}"
+        );
     }
 
     #[test]
