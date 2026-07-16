@@ -84,6 +84,17 @@ impl Localnet {
         )
     }
 
+    /// Like [`boot_solana`](Self::boot_solana) but with the explorer on, so
+    /// surfpool serves its Studio UI on a second published host port. Cheap to
+    /// enable — it's a flag on the same surfpool image, no extra container.
+    pub(crate) fn boot_solana_ui(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config_explorer(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"solana\"\nport = {port}\n"),
+            true,
+        )
+    }
+
     /// Boot a `surfpool` Solana chain that forks a live Solana RPC at `fork_url`.
     /// Panics on failure.
     pub(crate) fn boot_solana_fork(chain: &str, port: u16, fork_url: &str) -> Localnet {

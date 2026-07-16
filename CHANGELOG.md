@@ -12,6 +12,14 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana block explorer** — every Solana chain now serves surfpool's built-in
+  **Studio** UI, on by default (skipped by `up --bare`), matching the EVM
+  (Otterscan) and Starknet (`--ui`) explorers. Unlike the Starknet UI — served at
+  `/ui` on the RPC port — surfpool runs Studio as a separate in-container service,
+  so wharfnet publishes it on the chain's RPC port **+ 10000** (`solana-1` on 8899
+  → Studio on 18899) via a second port mapping, and records the URL in the unified
+  `status`/manifest. The extra host port is folded into the cross-chain collision
+  check so it can't silently clash with another chain's port.
 - **Solana persistence** — `up --resume` / `up --reset` now cover Solana chains
   too. Each persists to its own `session-<chain>.sqlite` surfnet database via
   surfpool's `--db`/`--surfnet-id`, so balances, mints, and transactions survive

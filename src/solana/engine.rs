@@ -19,6 +19,20 @@ const SURFPOOL_IMAGE: &str = "surfpool/surfpool:1.4.0";
 /// Port surfpool serves the Solana JSON-RPC on inside its container (its default).
 const SURFPOOL_INTERNAL_PORT: u16 = 8899;
 
+/// Port surfpool serves the Studio explorer on inside its container (its
+/// default). Unlike the Starknet web UI — which devnet serves at `/ui` on the
+/// RPC port — surfpool's Studio is a separate service on its own port, so
+/// wharfnet publishes it as a second host mapping when the explorer is on.
+const SURFPOOL_STUDIO_INTERNAL_PORT: u16 = 18488;
+
+/// Offset added to a chain's published RPC host port to derive its Studio host
+/// port, so `solana-1` on 8899 serves Studio on 18899. Deterministic and — since
+/// RPC host ports are already unique across chains — collision-free between
+/// Solana chains; [`extra_host_ports`](Engine::extra_host_ports) surfaces it to
+/// the orchestrator's cross-chain port check for the rare clash with another
+/// chain's RPC port.
+const STUDIO_HOST_PORT_OFFSET: u16 = 10_000;
+
 /// Lamports airdropped to each dev account at boot: 10,000 SOL (1 SOL = 10^9
 /// lamports), matching surfpool's own default and the spirit of Anvil's
 /// 10,000-ETH dev accounts. surfpool also tops each account up to the
@@ -55,6 +69,7 @@ pub struct SolanaEngine {
     name: String,
     image: String,
     host_port: u16,
+    studio: bool,
     fork: Option<Fork>,
 }
 
@@ -64,8 +79,34 @@ impl SolanaEngine {
             name: name.to_string(),
             image: SURFPOOL_IMAGE.to_string(),
             host_port,
+            studio: false,
             fork: None,
         }
+    }
+
+    /// Enable surfpool's Studio explorer for this chain. On by default under
+    /// `up`; disabled by `up --bare`. Studio is a separate in-container service
+    /// (not served on the RPC port like the Starknet UI), so enabling it
+    /// publishes a second host port — [`studio_host_port`](Self::studio_host_port)
+    /// — rather than reusing the RPC one.
+    pub fn studio(mut self, enabled: bool) -> Self {
+        self.studio = enabled;
+        self
+    }
+
+    /// Host port this chain's Studio explorer is published on: the RPC host port
+    /// plus a fixed offset (`solana-1` on 8899 → 18899). `saturating_add` keeps a
+    /// near-max RPC port from panicking; any resulting clash surfaces through the
+    /// orchestrator's port check, not a docker bind error.
+    fn studio_host_port(&self) -> u16 {
+        self.host_port.saturating_add(STUDIO_HOST_PORT_OFFSET)
+    }
+
+    /// URL of surfpool's Studio explorer for this chain, when enabled. The
+    /// browser reaches it on the published Studio host port (served at the root).
+    fn studio_url(&self) -> Option<String> {
+        self.studio
+            .then(|| format!("http://127.0.0.1:{}", self.studio_host_port()))
     }
 
     /// Fork this chain from a live Solana RPC via surfpool's `--rpc-url`
@@ -143,15 +184,40 @@ impl Engine for SolanaEngine {
         self.host_port
     }
 
+    fn extra_host_ports(&self) -> Vec<u16> {
+        // The Studio explorer is published on its own host port when enabled;
+        // surface it so the orchestrator's collision check covers it.
+        if self.studio {
+            vec![self.studio_host_port()]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn compose_service(&self, mode: StateMode) -> String {
         // The datasource is either a standalone local chain (`--offline`) or a
-        // copy-on-read fork of a live network (`--rpc-url`). The Studio explorer
-        // stays off (`--no-studio`) until the explorer work — mirroring how the
-        // Starknet UI arrived later. Dev accounts are airdropped either way, so a
-        // forked chain still has funded signers layered over the live state.
+        // copy-on-read fork of a live network (`--rpc-url`). Dev accounts are
+        // airdropped either way, so a forked chain still has funded signers
+        // layered over the live state.
         let datasource_args = match &self.fork {
             Some(fork) => format!(r#", "--rpc-url", "{}""#, fork.url),
             None => r#", "--offline""#.to_string(),
+        };
+        // Studio explorer: off by default (`--no-studio`). When on, pin its
+        // in-container port (Studio defaults on) and publish it as a second host
+        // mapping so a browser on the host can reach it — surfpool serves Studio
+        // on its own port, not on the RPC port like the Starknet `--ui`.
+        let (studio_args, studio_port_mapping) = if self.studio {
+            (
+                format!(r#", "--studio-port", "{SURFPOOL_STUDIO_INTERNAL_PORT}""#),
+                format!(
+                    "\n      - \"{}:{}\"",
+                    self.studio_host_port(),
+                    SURFPOOL_STUDIO_INTERNAL_PORT
+                ),
+            )
+        } else {
+            (r#", "--no-studio""#.to_string(), String::new())
         };
         // Persistence: `--db` + a stable `--surfnet-id` write surfnet state to a
         // per-chain SQLite db under the bind-mounted state dir, restored on the
@@ -173,7 +239,8 @@ impl Engine for SolanaEngine {
             .replace("{{DATASOURCE_ARGS}}", &datasource_args)
             .replace("{{AIRDROP_ARGS}}", &Self::airdrop_args())
             .replace("{{STATE_ARGS}}", &state_args)
-            .replace("{{STUDIO_ARGS}}", r#", "--no-studio""#)
+            .replace("{{STUDIO_ARGS}}", &studio_args)
+            .replace("{{STUDIO_PORT_MAPPING}}", &studio_port_mapping)
     }
 
     fn manifest_entry(&self) -> ChainEntry {
@@ -188,8 +255,7 @@ impl Engine for SolanaEngine {
             chain_id: SOLANA_CHAIN_ID.to_string(),
             accounts: Self::accounts(),
             // The SPL test tokens are seeded post-boot via cheatcodes (see
-            // `post_boot`); advertise their deterministic mint addresses here. The
-            // Studio explorer arrives in later work.
+            // `post_boot`); advertise their deterministic mint addresses here.
             tokens: if forked {
                 Vec::new()
             } else {
@@ -197,7 +263,9 @@ impl Engine for SolanaEngine {
             },
             contracts: Vec::new(),
             fork: self.fork.as_ref().map(Fork::describe),
-            explorer: None,
+            // surfpool's Studio explorer, when enabled — served on its own
+            // published host port, unlike the Starknet UI on the RPC port.
+            explorer: self.studio_url(),
         }
     }
 
@@ -299,12 +367,60 @@ mod tests {
             "9akreS78QY4sx2d3aXHdrPCv1rQay1JXoiVWXK6rP9jh"
         );
         // The baked SPL test tokens are advertised (seeded post-boot); no infra
-        // contracts, fork, or explorer on a fresh local chain yet.
+        // contracts or fork on a fresh local chain, and the explorer is off unless
+        // enabled (default constructor leaves Studio off).
         let symbols: Vec<&str> = entry.tokens.iter().map(|t| t.symbol.as_str()).collect();
         assert_eq!(symbols, vec!["USDC", "WBTC"]);
         assert!(entry.contracts.is_empty());
         assert!(entry.fork.is_none());
         assert!(entry.explorer.is_none());
+    }
+
+    #[test]
+    fn studio_enabled_publishes_the_port_and_advertises_the_explorer() {
+        let e = SolanaEngine::surfpool("solana-1", 8899).studio(true);
+        // The flag rides on surfpool's command (both state modes), and the
+        // container's Studio port is published on the host at RPC port + 10000.
+        for mode in [StateMode::Ephemeral, StateMode::Persistent] {
+            let yaml = e.compose_service(mode);
+            assert!(
+                yaml.contains("\"--studio-port\", \"18488\""),
+                "studio on → surfpool serves its explorer: {yaml}"
+            );
+            // Match the quoted command token, not a bare substring — the template
+            // comment mentions `--no-studio` even when the flag itself is absent.
+            assert!(
+                !yaml.contains("\"--no-studio\""),
+                "studio on must not also disable it: {yaml}"
+            );
+            assert!(
+                yaml.contains("\"18899:18488\""),
+                "the Studio port must be published on the host: {yaml}"
+            );
+        }
+        // The manifest advertises the published Studio host port (served at root)…
+        assert_eq!(
+            e.manifest_entry().explorer.as_deref(),
+            Some("http://127.0.0.1:18899")
+        );
+        // …the collision check sees that extra port…
+        assert_eq!(e.extra_host_ports(), vec![18899]);
+        // …and Studio is in-process, so no Otterscan pairing is requested.
+        assert!(e.explorer_target().is_none());
+    }
+
+    #[test]
+    fn studio_disabled_by_default_omits_the_port_and_the_explorer() {
+        let e = SolanaEngine::surfpool("solana-1", 8899);
+        let yaml = e.compose_service(StateMode::Ephemeral);
+        assert!(yaml.contains("\"--no-studio\""));
+        // Only the RPC port is published; no second Studio mapping.
+        assert!(
+            !yaml.contains("18899"),
+            "studio off must not publish a Studio port: {yaml}"
+        );
+        assert!(e.manifest_entry().explorer.is_none());
+        assert!(e.extra_host_ports().is_empty());
     }
 
     #[test]
@@ -454,6 +570,60 @@ mod tests {
                 account.address
             );
         }
+    }
+
+    /// Minimal HTTP GET → `(status_code, body)`, for hitting the Studio page.
+    fn http_get(port: u16, path: &str) -> (u16, String) {
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut resp = String::new();
+        let _ = stream.read_to_string(&mut resp);
+        let status = resp
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let body = resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+        (status, body)
+    }
+
+    /// A dedicated high port for the Studio-explorer e2e, distinct from the other
+    /// Solana e2e ports so it can run in parallel. Its Studio lands on +10000.
+    const SOL_UI_E2E_PORT: u16 = 18992;
+
+    #[test]
+    fn solana_surfpool_serves_the_studio_explorer() {
+        if !docker_available() {
+            eprintln!("skipping solana studio e2e: docker unavailable");
+            return;
+        }
+        let net = Localnet::boot_solana_ui("t-solana-ui", SOL_UI_E2E_PORT);
+
+        // With the explorer on, surfpool serves Studio on its own published host
+        // port (RPC port + 10000), at the root — a separate service, not the RPC
+        // port like the Starknet UI.
+        let studio_port = SOL_UI_E2E_PORT + 10000;
+        let (status, body) = http_get(studio_port, "/");
+        assert_eq!(
+            status, 200,
+            "GET / on the Studio port should serve the page"
+        );
+        assert!(
+            body.to_lowercase().contains("<!doctype html"),
+            "Studio should return an HTML page, got: {}",
+            &body[..body.len().min(200)]
+        );
+
+        // ...and the manifest advertises exactly that URL, so tooling can find it.
+        let manifest = Manifest::read(&manifest_path(net.base())).unwrap();
+        assert_eq!(
+            manifest.chains[0].explorer.as_deref(),
+            Some(format!("http://127.0.0.1:{studio_port}").as_str())
+        );
     }
 
     /// Dedicated ports for the forking e2e: an origin chain and the chain that

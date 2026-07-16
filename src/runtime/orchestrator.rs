@@ -72,9 +72,9 @@ pub(crate) fn manifest_path(base: &Path) -> PathBuf {
 /// fail; it's an internal invariant, not user-facing validation.
 ///
 /// `explorer` mirrors the caller's explorer preference (`up` on, `up --bare`
-/// off). EVM chains pair with a separate Otterscan container built later, but a
-/// Starknet chain serves its explorer in-process, so the flag is baked into the
-/// engine here to reach its `--ui` compose arg.
+/// off). EVM chains pair with a separate Otterscan container built later, but
+/// Starknet and Solana chains serve their explorer in-process, so the flag is
+/// baked into the engine here to reach its `--ui` / `--studio-port` compose arg.
 fn engines_for(config: &Config, explorer: bool) -> Vec<Box<dyn Engine>> {
     config
         .chains
@@ -106,7 +106,7 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
             Box::new(engine)
         }
         "solana" => {
-            let mut engine = SolanaEngine::surfpool(&c.name, c.port);
+            let mut engine = SolanaEngine::surfpool(&c.name, c.port).studio(explorer);
             if let Some(url) = &c.fork_url {
                 // surfpool takes no fork slot; config rejects fork_block on Solana.
                 engine = engine.fork(url.clone());
@@ -167,7 +167,13 @@ fn explorer_services(engines: &[Box<dyn Engine>]) -> Vec<ExplorerService> {
 /// that range would otherwise surface only as a cryptic docker bind failure.
 fn check_ports(engines: &[Box<dyn Engine>], explorers: &[ExplorerService]) -> Result<()> {
     let mut seen = HashSet::new();
-    let ports = engines.iter().map(|e| (e.host_port(), e.name())).chain(
+    // A chain's RPC port plus any extra host ports it publishes (e.g. an
+    // in-process explorer served on its own port, like surfpool's Studio).
+    let chain_ports = engines.iter().flat_map(|e| {
+        std::iter::once((e.host_port(), e.name()))
+            .chain(e.extra_host_ports().into_iter().map(move |p| (p, e.name())))
+    });
+    let ports = chain_ports.chain(
         explorers
             .iter()
             .map(|s| (s.host_port, s.service_name.clone())),
@@ -726,6 +732,71 @@ mod tests {
             !bare.contains("\"--ui\""),
             "bare must not serve the web UI: {bare}"
         );
+    }
+
+    #[test]
+    fn explorer_flag_enables_the_solana_studio_and_bare_disables_it() {
+        // With the explorer on, the Solana chain serves surfpool's in-process
+        // Studio and publishes it on a second host port (RPC port + 10000).
+        let out = render_compose(
+            &engines_for(&Config::default(), true),
+            StateMode::Ephemeral,
+            &[],
+        );
+        assert!(
+            out.contains("\"--studio-port\", \"18488\""),
+            "explorer on → surfpool serves Studio: {out}"
+        );
+        assert!(
+            out.contains("\"18899:18488\""),
+            "explorer on → Studio port is published (solana-1 on 8899): {out}"
+        );
+
+        // `up --bare` (explorer off) disables Studio and publishes no extra port.
+        let bare = render_compose(
+            &engines_for(&Config::default(), false),
+            StateMode::Ephemeral,
+            &[],
+        );
+        assert!(
+            bare.contains("\"--no-studio\""),
+            "bare must disable Studio: {bare}"
+        );
+        assert!(
+            !bare.contains("18899"),
+            "bare must not publish a Studio port: {bare}"
+        );
+    }
+
+    #[test]
+    fn check_ports_rejects_a_chain_port_that_collides_with_a_solana_studio() {
+        // A chain published on another Solana chain's Studio host port (RPC +
+        // 10000) clashes — caught here rather than as a cryptic docker bind error.
+        let config = Config {
+            chains: vec![
+                config::ChainConfig {
+                    name: "solana-a".into(),
+                    kind: "solana".into(),
+                    port: 8899,
+                    chain_id: None,
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+                config::ChainConfig {
+                    name: "evm-x".into(),
+                    kind: "evm".into(),
+                    port: 18899, // == solana-a's Studio port
+                    chain_id: Some("31337".into()),
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+            ],
+        };
+        let engines = engines_for(&config, true);
+        let err = check_ports(&engines, &[]).unwrap_err();
+        assert!(err.to_string().contains("more than one service"), "{err}");
     }
 
     #[test]

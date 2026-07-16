@@ -8,7 +8,8 @@
 > tokens), the **faucet funds it**, its state **persists across `up --resume`**,
 > and it ships with a **built-in block explorer** too. A Solana chain
 > (**surfpool**) now **boots by default** as well, with deterministic funded dev
-> accounts; its faucet, SPL test tokens, persistence, and forking are landing next.
+> accounts, SPL test tokens, a **faucet**, **persistence**, **forking**, and its
+> own **built-in Studio explorer**.
 
 `wharfnet` is the local harbor for your chains: boot EVM, Solana, and Starknet
 networks locally with a single command, fund accounts from a unified faucet,
@@ -67,6 +68,8 @@ Early WIP, but the **EVM stack works end to end today**. See the
       no `fork_block` (surfpool has no fork-at-slot)
 - [x] Solana persistence — `up --resume` / `up --reset` keep (or discard) a
       Solana chain's state across restarts, like the EVM/Starknet chains
+- [x] Solana block explorer — surfpool's built-in Studio UI, on by default,
+      served in-process on its own published port
 
 **Planned**
 
@@ -290,19 +293,22 @@ wharfnet up --bare   # chains only
 
 Anvil implements Otterscan's RPC API (`ots_*`), so the explorer needs no indexer
 or database — it's a static frontend talking straight to the chain. Each EVM
-chain gets its own Otterscan on a dedicated port. **Starknet** chains use
-starknet-devnet's own built-in web UI instead (Otterscan is EVM-only): it's
-served in-process at `/ui` on the chain's own RPC port, so there's no extra
-container or port. Every explorer URL is recorded in the manifest and printed by
-`status`:
+chain gets its own Otterscan on a dedicated port. **Starknet** and **Solana**
+chains instead use their engine's own built-in web UI (Otterscan is EVM-only),
+served in-process — no extra container. starknet-devnet serves its UI at `/ui`
+on the chain's own RPC port; surfpool's **Studio** is a separate service, so
+wharfnet publishes it on the chain's RPC port **+ 10000** (e.g. `solana-1` on
+8899 → Studio on 18899). Every explorer URL is recorded in the manifest and
+printed by `status`:
 
 | Chain      | RPC                         | Explorer                    |
 | ---------- | --------------------------- | --------------------------- |
 | anvil-1    | `http://127.0.0.1:8545`     | `http://127.0.0.1:5100`     |
 | anvil-2    | `http://127.0.0.1:8546`     | `http://127.0.0.1:5101`     |
 | starknet-1 | `http://127.0.0.1:5050/rpc` | `http://127.0.0.1:5050/ui`  |
+| solana-1   | `http://127.0.0.1:8899`     | `http://127.0.0.1:18899`    |
 
-`--bare` skips both the Otterscan containers and devnet's `--ui`.
+`--bare` skips the Otterscan containers, devnet's `--ui`, and surfpool's Studio.
 
 ## EVM chain control
 
@@ -459,6 +465,10 @@ Solana analogue of Anvil's fixed test mnemonic). They're well-known throwaway
 keys, funded with 10,000 SOL each at boot and recorded in the manifest with their
 base58 secrets, so tooling can sign as them. Readiness is checked against
 surfpool's `getHealth` RPC.
+
+Each Solana chain also serves surfpool's built-in **Studio** explorer, published
+on its RPC port + 10000 (`solana-1` → `http://127.0.0.1:18899`) and recorded in
+the manifest; `up --bare` skips it (see [Block explorer](#block-explorer)).
 
 ### Solana test tokens
 

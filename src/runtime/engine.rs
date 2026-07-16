@@ -55,6 +55,13 @@ pub trait Engine {
     fn name(&self) -> String;
     /// The host port the RPC is published on (used for health checks).
     fn host_port(&self) -> u16;
+    /// Extra host ports this engine publishes beyond its RPC port — e.g. an
+    /// in-process explorer served on its own port. Folded into the collision
+    /// check so a user's chain port can't silently clash with one. Defaults to
+    /// none (most engines publish only their RPC port).
+    fn extra_host_ports(&self) -> Vec<u16> {
+        Vec::new()
+    }
     /// A docker-compose service fragment, indented two spaces under `services:`.
     fn compose_service(&self, mode: StateMode) -> String;
     /// How to reach this chain, for the manifest.
