@@ -1,10 +1,14 @@
+---
+title: EVM chains
+---
+
+import { Callout } from 'nextra/components'
+
 # EVM chains
 
 `wharfnet up` boots two [Anvil](https://book.getfoundry.sh/anvil/) chains by
 default — `anvil-1` on `:8545` and `anvil-2` on `:8546` — each with pre-deployed
-test tokens, canonical infra contracts, and a block explorer. This page covers
-everything EVM-specific; see the [root README](../README.md) for install,
-quickstart, and configuration basics.
+test tokens, canonical infra contracts, and a block explorer.
 
 ```sh
 wharfnet up
@@ -92,7 +96,7 @@ Point a chain at a live RPC and it boots as a **fork** of that network — real
 balances, contracts, and storage, mutable locally. Add `fork_url` (and optionally
 `fork_block` to pin a height) to a chain in `wharfnet.toml`:
 
-```toml
+```toml filename="wharfnet.toml"
 [[chains]]
 name = "mainnet"
 port = 8545
@@ -101,16 +105,18 @@ fork_url = "${MAINNET_RPC}"   # ${VAR} is expanded from the environment
 fork_block = 21000000         # optional; omit to track the latest block
 ```
 
-`${VAR}` references are resolved from the environment on load, so an RPC key
-never has to live in the file — and the manifest and `status` only ever record a
-**redacted** `scheme://host`, never the key. Pinning `fork_block` to a past block
-needs an **archive** RPC; forking at the latest block works with an ordinary
-full-node endpoint.
+<Callout type="info">
+  `${VAR}` references are resolved from the environment on load, so an RPC key
+  never has to live in the file — and the manifest and `status` only ever record
+  a **redacted** `scheme://host`, never the key.
+</Callout>
 
-A forked chain mirrors live state, so it does **not** load the baked test tokens
-or canonical contracts — it already has whatever the source network has. Combine
-forking with chain control: `wharfnet evm impersonate` lets you send transactions
-as any address (a whale, a protocol admin) with no key.
+Pinning `fork_block` to a past block needs an **archive** RPC; forking at the
+latest block works with an ordinary full-node endpoint. A forked chain mirrors
+live state, so it does **not** load the baked test tokens or canonical contracts —
+it already has whatever the source network has. Combine forking with chain
+control: `wharfnet evm impersonate` lets you send transactions as any address (a
+whale, a protocol admin) with no key.
 
 ```sh
 MAINNET_RPC=https://… wharfnet up --config fork.toml --bare
@@ -136,5 +142,4 @@ Pass `--bare` to skip the explorer containers and run only the chains.
 
 EVM chains persist across `up --resume` / `up --reset` via Anvil's `--state`
 (one `session-<chain>.json` per chain under `.wharfnet/state/`). See
-[State & persistence](../README.md#state--persistence) in the root README for the
-shared model.
+[Resuming a session](/getting-started#resuming-a-session) for the shared model.

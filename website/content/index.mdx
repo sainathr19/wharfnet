@@ -1,0 +1,61 @@
+---
+title: Introduction
+---
+
+import { Features, Feature } from '../app/features'
+
+# wharfnet
+
+**One-command localnet for EVM, Solana & Starknet** — boot every chain your app
+touches with a single command, fund accounts from a unified faucet, and get
+standard test tokens deployed at known addresses, then wire it straight into your
+integration tests and CI pipelines.
+
+`wharfnet` is the local harbor for your chains. It packages the stitching that
+cross-chain and multi-VM teams do by hand — an EVM node, a Solana validator, a
+Starknet devnet, plus a homemade faucet and glue scripts — into one opinionated,
+reproducible tool.
+
+<Features>
+  <Feature icon="chains" title="One command, many chains">
+    EVM, Starknet, and Solana boot together behind one config, one manifest, one `status`.
+  </Feature>
+  <Feature icon="battery" title="Batteries included">
+    Funded accounts, fixed-address test tokens, a faucet, chain control, and forking.
+  </Feature>
+  <Feature icon="repeat" title="Reproducible by default">
+    Deterministic every boot — identical accounts and token addresses for CI.
+  </Feature>
+  <Feature icon="layers" title="Uniform across VMs">
+    The same verbs work whether the chain is EVM, Starknet, or Solana.
+  </Feature>
+  <Feature icon="faucet" title="Unified faucet">
+    One `faucet` command tops up native coin and every test token on any chain.
+  </Feature>
+  <Feature icon="terminal" title="CI-friendly">
+    Runs from pinned Docker images; `up` waits for readiness, `down` tears it all down.
+  </Feature>
+</Features>
+
+## Using wharfnet locally
+
+A single `wharfnet up` boots an EVM chain, a Starknet chain, and a Solana chain
+side by side — each with funded dev accounts, test tokens at fixed addresses, and
+a built-in block explorer:
+
+```sh
+wharfnet up            # chains + a block explorer each
+wharfnet up --bare     # just the chains
+wharfnet status        # what's running, with RPC URLs and accounts
+```
+
+Everything is deterministic by default, so tests and CI get an identical
+environment every run — with opt-in persistence when you want to pick up where
+you left off.
+
+Get started:
+
+- [Getting Started](/getting-started) — install, boot, and configure
+- [EVM chains](/evm) — Anvil, test tokens, canonical contracts, chain control
+- [Starknet chains](/starknet) — starknet-devnet, Cairo test tokens, forking
+- [Solana chains](/solana) — surfpool, SPL tokens, WebSocket RPC, Studio explorer

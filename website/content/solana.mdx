@@ -1,11 +1,16 @@
+---
+title: Solana chains
+---
+
+import { Callout } from 'nextra/components'
+
 # Solana chains
 
 `wharfnet up` boots a [`surfpool`](https://github.com/solana-foundation/surfpool)
 Solana chain by default (`solana-1` on `:8899`), alongside the EVM and Starknet
 chains. surfpool runs an in-memory SVM ("surfnet") that boots in about a second
 and serves the standard Solana JSON-RPC, so the usual tooling (`solana`, `anchor`)
-points straight at it. This page covers everything Solana-specific; see the
-[root README](../README.md) for install, quickstart, and configuration basics.
+points straight at it.
 
 ```sh
 wharfnet up --bare
@@ -48,9 +53,11 @@ surfpool's `surfnet_setAccount` cheat and funds the dev accounts with
 `surfnet_setTokenAccount`. The mint addresses are deterministic (ed25519 of
 `sha256("wharfnet-solana-mint-<symbol>")`) and their mint authority is dev account 0.
 
-"Weird" Token-2022 test tokens (transfer-fee, interest-bearing) are planned but
-not yet available — surfpool's cheatcodes don't currently create queryable
-Token-2022 accounts.
+<Callout type="info">
+  "Weird" Token-2022 test tokens (transfer-fee, interest-bearing) are planned but
+  not yet available — surfpool's cheatcodes don't currently create queryable
+  Token-2022 accounts.
+</Callout>
 
 ## Faucet
 
@@ -101,7 +108,7 @@ Set `fork_url` on a `kind = "solana"` chain and surfpool boots as a
 first access. The predeployed dev accounts are still airdropped over the fork, so
 you have funded signers immediately:
 
-```toml
+```toml filename="wharfnet.toml"
 [[chains]]
 name = "sol-fork"
 kind = "solana"
@@ -109,10 +116,12 @@ port = 8899
 fork_url = "${SOLANA_RPC}"   # a Solana JSON-RPC endpoint (e.g. mainnet-beta)
 ```
 
-One difference from the EVM/Starknet forks: **`fork_block` is not supported for
-Solana** — surfpool has no fork-at-slot flag, so a Solana fork always tracks the
-datasource's current slot. Setting `fork_block` on a `kind = "solana"` chain is
-rejected on load.
+<Callout type="warning">
+  One difference from the EVM/Starknet forks: **`fork_block` is not supported for
+  Solana** — surfpool has no fork-at-slot flag, so a Solana fork always tracks the
+  datasource's current slot. Setting `fork_block` on a `kind = "solana"` chain is
+  rejected on load.
+</Callout>
 
 ## Block explorer
 
@@ -132,5 +141,4 @@ Pass `--bare` to skip it.
 Solana chains persist across `up --resume` / `up --reset` like the EVM/Starknet
 chains: surfpool writes a surfnet SQLite db (`session-<chain>.sqlite`) via `--db`
 under `.wharfnet/state/`, reloaded on the next `--resume`. See
-[State & persistence](../README.md#state--persistence) in the root README for the
-shared model.
+[Resuming a session](/getting-started#resuming-a-session) for the shared model.

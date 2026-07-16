@@ -1,0 +1,131 @@
+---
+title: Getting Started
+---
+
+import { Callout, Steps } from 'nextra/components'
+
+# Getting Started
+
+## Prerequisites
+
+wharfnet runs each chain as a container, so it needs **Docker with the Compose
+plugin** (`docker compose`) and a running daemon. Every command that boots or
+drives a chain — `up`, `down`, `faucet`, and `wharfnet evm …` — shells out to
+`docker compose`, so CI runners need a Docker daemon available too.
+
+<Callout type="info">
+  You do **not** need Foundry, a Solana toolchain, or a Starknet devnet
+  installed: each chain runs from a pinned image, and per-chain tooling (e.g.
+  `cast`) runs inside the container, so installing Docker is the whole setup.
+  Building from source also needs a stable **Rust** toolchain.
+</Callout>
+
+Without Docker, chain commands fail fast with a clear message; only
+`wharfnet compose` (render the Compose file) and `wharfnet status` (read the
+manifest) run without it.
+
+## Quickstart
+
+<Steps>
+
+### Build
+
+```sh
+cargo build --release
+```
+
+### Boot the network
+
+```sh
+# chains + a block explorer each
+wharfnet up
+
+# just the chains, without the explorers
+wharfnet up --bare
+```
+
+### Check what's running
+
+```sh
+wharfnet status
+```
+
+`status` prints every chain's RPC (and WebSocket) URL, funded accounts, test
+tokens, and explorer — the same data written to `.wharfnet/wharfnet.json`.
+
+### Fund an address
+
+```sh
+# native coin + every bundled token, on all EVM chains
+wharfnet faucet evm 0xabc... 100
+
+# the same command funds Starknet and Solana
+wharfnet faucet starknet 0x05a1... 100
+wharfnet faucet solana 9WzD…AWWM 100
+```
+
+### Tear it down
+
+```sh
+wharfnet down
+```
+
+</Steps>
+
+## Resuming a session
+
+By default `wharfnet up` boots a **fresh, deterministic** network every time, and
+runtime changes (faucet top-ups, transactions, deploys) are discarded on `down`.
+To pick up where you left off:
+
+| Command | Behaviour |
+| ------- | --------- |
+| `wharfnet up` | Fresh boot from the baked snapshot. Runtime changes are not saved. |
+| `wharfnet up --resume` | Restore the previous session if one exists (else fresh), and **keep saving** — balances, txs, and deployments survive `down` → `up --resume`. |
+| `wharfnet up --reset` | Discard any saved session, then boot fresh. |
+
+Each chain persists to a per-chain session under `.wharfnet/state/` that it
+reloads on the next `--resume`; the exact mechanism per chain kind is documented
+in the per-chain guides. `--resume` and `--reset` are mutually exclusive.
+
+## Configuration
+
+wharfnet runs zero-config — two Anvil chains, a Starknet chain, and a Solana
+chain by default (`anvil-1` :8545, `anvil-2` :8546, `starknet-1` :5050,
+`solana-1` :8899). To customise the topology — including dropping a chain — write
+a `wharfnet.toml` in your project root (a config replaces the defaults entirely):
+
+```toml filename="wharfnet.toml"
+[[chains]]
+name = "anvil-1"
+port = 8545
+chain_id = 31337
+block_time = 1      # optional, defaults to 1
+
+[[chains]]
+name = "sn-1"
+kind = "starknet"   # boots a starknet-devnet chain
+port = 5050         # RPC is published at http://127.0.0.1:5050/rpc
+
+[[chains]]
+name = "sol-1"
+kind = "solana"     # boots a surfpool chain
+port = 8899
+```
+
+Each chain needs a unique `name` and `port`; `kind` defaults to `evm` and may be
+`starknet` or `solana`. EVM chains also need a numeric `chain_id`; Starknet and
+Solana chains omit it. Accounts and test tokens come from the baked presets and
+aren't configured here. Run `wharfnet compose` to see the resolved setup — and to
+catch config errors — without booting anything.
+
+By default wharfnet reads `./wharfnet.toml`. Point at a different file with
+`--config <path>` (or `-c`) on `up`/`compose`, or the `WHARFNET_CONFIG` env var:
+
+```sh
+wharfnet up --config fork.toml
+WHARFNET_CONFIG=ci.toml wharfnet up
+```
+
+Any chain can fork a live network by adding `fork_url` (and, for EVM/Starknet,
+`fork_block`) — see the per-chain guides for the specifics.

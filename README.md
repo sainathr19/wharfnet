@@ -32,14 +32,19 @@ opinionated, reproducible tool:
 
 ## Documentation
 
-Per-chain guides — tokens, faucet, chain control, forking, explorer, and
-persistence for each stack:
+Full docs — install, configuration, and per-chain guides (tokens, faucet, chain
+control, forking, explorer, persistence) — live at
+**[sainathr19.github.io/wharfnet](https://sainathr19.github.io/wharfnet/)**:
 
-| Chain                          | Default node        | Guide                     |
-| ------------------------------ | ------------------- | ------------------------- |
-| **EVM** (`anvil-1`, `anvil-2`) | Anvil               | [docs/evm.md](docs/evm.md) |
-| **Starknet** (`starknet-1`)    | starknet-devnet     | [docs/starknet.md](docs/starknet.md) |
-| **Solana** (`solana-1`)        | surfpool            | [docs/solana.md](docs/solana.md) |
+| Chain                          | Default node    | Guide                                                        |
+| ------------------------------ | --------------- | ------------------------------------------------------------ |
+| **EVM** (`anvil-1`, `anvil-2`) | Anvil           | [/evm](https://sainathr19.github.io/wharfnet/evm)           |
+| **Starknet** (`starknet-1`)    | starknet-devnet | [/starknet](https://sainathr19.github.io/wharfnet/starknet) |
+| **Solana** (`solana-1`)        | surfpool        | [/solana](https://sainathr19.github.io/wharfnet/solana)     |
+
+The site is a [Nextra](https://nextra.site) app under [`website/`](website/),
+deployed to GitHub Pages on every push to `main` (source pages live in
+[`website/content/`](website/content/)).
 
 ## Prerequisites
 

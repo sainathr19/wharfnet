@@ -1,12 +1,16 @@
+---
+title: Starknet chains
+---
+
+import { Callout } from 'nextra/components'
+
 # Starknet chains
 
 `wharfnet up` boots a
 [`starknet-devnet`](https://github.com/0xSpaceShard/starknet-devnet) chain by
 default (`starknet-1` on `:5050`), right next to the two EVM chains — one command,
 one manifest, one `status`. To run without it, write a `wharfnet.toml` that omits
-the Starknet chain (a config replaces the defaults). This page covers everything
-Starknet-specific; see the [root README](../README.md) for install, quickstart,
-and configuration basics.
+the Starknet chain (a config replaces the defaults).
 
 ```sh
 wharfnet up --bare
@@ -43,9 +47,8 @@ tokens are baked into a devnet **replay log** that `wharfnet up` re-executes on
 boot; regenerate it after editing the sources with
 `./scripts/gen-starknet-token-state.sh` (needs `scarb` + `cargo` — the
 declare/deploy step runs through `examples/gen_starknet_tokens.rs`, using the same
-JSON-RPC-0.10 [`starknet-rust`] client the faucet does).
-
-[`starknet-rust`]: https://github.com/software-mansion/starknet-rust
+JSON-RPC-0.10 [`starknet-rust`](https://github.com/software-mansion/starknet-rust)
+client the faucet does).
 
 ## Faucet
 
@@ -79,11 +82,13 @@ wharfnet starknet impersonate 0x0123…    # forked chains only (see below)
 wharfnet starknet impersonate 0x0123… --stop
 ```
 
-Two differences from the EVM verbs, both from starknet-devnet: there's **no
-`snapshot`/`revert`** (devnet has no numbered-snapshot mechanism, only block
-abort), and **`impersonate` works only on a forked chain** — devnet impersonates
-accounts that exist on the forked origin, so on a plain local chain the command
-is refused with a hint to set `fork_url` first.
+<Callout type="warning">
+  Two differences from the EVM verbs, both from starknet-devnet: there's **no
+  `snapshot`/`revert`** (devnet has no numbered-snapshot mechanism, only block
+  abort), and **`impersonate` works only on a forked chain** — devnet impersonates
+  accounts that exist on the forked origin, so on a plain local chain the command
+  is refused with a hint to set `fork_url` first.
+</Callout>
 
 ## Forking
 
@@ -92,7 +97,7 @@ it boots as a fork via starknet-devnet's `--fork-network`, mirroring the origin'
 contracts and balances. The same `${VAR}` expansion and redaction as the EVM side
 apply — the key never lands in the file or the manifest:
 
-```toml
+```toml filename="wharfnet.toml"
 [[chains]]
 name = "sn-fork"
 kind = "starknet"
@@ -122,5 +127,4 @@ skip it.
 Starknet chains persist across `up --resume` / `up --reset` like the EVM chains:
 devnet dumps its replay log on every block (one entry per transaction) under
 `.wharfnet/state/`, replayed on the next `--resume`. See
-[State & persistence](../README.md#state--persistence) in the root README for the
-shared model.
+[Resuming a session](/getting-started#resuming-a-session) for the shared model.
