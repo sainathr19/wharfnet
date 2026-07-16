@@ -26,7 +26,7 @@ export function Logo() {
         <path d="M5 12H2a10 10 0 0 0 20 0h-3" />
         <line x1="8" y1="10" x2="16" y2="10" />
       </svg>
-      <span>wharfnet</span>
+      <span>Wharfnet</span>
     </span>
   )
 }

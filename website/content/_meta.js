@@ -5,8 +5,5 @@ export default {
   starknet: 'Starknet chains',
   solana: 'Solana chains',
   contributing: 'Contributing',
-  changelog: {
-    title: 'Changelog ↗',
-    href: 'https://github.com/sainathr19/wharfnet/blob/main/CHANGELOG.md'
-  }
+  changelog: 'Changelog'
 }

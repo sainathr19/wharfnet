@@ -7,8 +7,8 @@ import './globals.css'
 
 export const metadata = {
   title: {
-    default: 'wharfnet',
-    template: '%s | wharfnet'
+    default: 'Wharfnet',
+    template: '%s | Wharfnet'
   },
   description:
     'One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.'
@@ -22,7 +22,7 @@ const footer = (
   <Footer>
     MIT {new Date().getFullYear()} ©{' '}
     <a href="https://github.com/sainathr19/wharfnet" target="_blank" rel="noreferrer">
-      wharfnet
+      Wharfnet
     </a>
   </Footer>
 )
