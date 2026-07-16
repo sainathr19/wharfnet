@@ -33,6 +33,20 @@ const SURFPOOL_STUDIO_INTERNAL_PORT: u16 = 18488;
 /// chain's RPC port.
 const STUDIO_HOST_PORT_OFFSET: u16 = 10_000;
 
+/// Port surfpool serves the WebSocket RPC on inside its container (its default).
+/// Subscriptions (`slotSubscribe`, `logsSubscribe`) and `confirmTransaction`
+/// ride this endpoint, so it must be published for host-side clients to work.
+const SURFPOOL_WS_INTERNAL_PORT: u16 = 8900;
+
+/// Offset added to a chain's published RPC host port to derive its WebSocket
+/// host port (`solana-1` on 8899 → WS on 8900). This mirrors Solana's own
+/// convention — clients like `@solana/web3.js` derive the WS URL as one past the
+/// RPC port — so a host client that only knows the RPC URL finds the WS endpoint
+/// automatically. Always published (WS is core RPC, not gated by `--bare`), and
+/// surfaced through [`extra_host_ports`](Engine::extra_host_ports) for the
+/// collision check.
+const WS_HOST_PORT_OFFSET: u16 = 1;
+
 /// Lamports airdropped to each dev account at boot: 10,000 SOL (1 SOL = 10^9
 /// lamports), matching surfpool's own default and the spirit of Anvil's
 /// 10,000-ETH dev accounts. surfpool also tops each account up to the
@@ -107,6 +121,20 @@ impl SolanaEngine {
     fn studio_url(&self) -> Option<String> {
         self.studio
             .then(|| format!("http://127.0.0.1:{}", self.studio_host_port()))
+    }
+
+    /// Host port this chain's WebSocket RPC is published on: the RPC host port
+    /// plus one (`solana-1` on 8899 → 8900), matching Solana's client convention.
+    /// `saturating_add` guards a near-max RPC port; any clash surfaces through the
+    /// orchestrator's port check.
+    fn ws_host_port(&self) -> u16 {
+        self.host_port.saturating_add(WS_HOST_PORT_OFFSET)
+    }
+
+    /// WebSocket RPC URL for this chain, on its published WS host port. Always
+    /// served (WS is core RPC), so — unlike the explorer — this is unconditional.
+    fn ws_url(&self) -> String {
+        format!("ws://127.0.0.1:{}", self.ws_host_port())
     }
 
     /// Fork this chain from a live Solana RPC via surfpool's `--rpc-url`
@@ -185,13 +213,14 @@ impl Engine for SolanaEngine {
     }
 
     fn extra_host_ports(&self) -> Vec<u16> {
-        // The Studio explorer is published on its own host port when enabled;
-        // surface it so the orchestrator's collision check covers it.
+        // The WebSocket RPC is always published on its own host port; the Studio
+        // explorer adds another when enabled. Surface both so the orchestrator's
+        // collision check covers them.
+        let mut ports = vec![self.ws_host_port()];
         if self.studio {
-            vec![self.studio_host_port()]
-        } else {
-            Vec::new()
+            ports.push(self.studio_host_port());
         }
+        ports
     }
 
     fn compose_service(&self, mode: StateMode) -> String {
@@ -236,6 +265,8 @@ impl Engine for SolanaEngine {
             .replace("{{IMAGE}}", &self.image)
             .replace("{{PORT}}", &SURFPOOL_INTERNAL_PORT.to_string())
             .replace("{{HOST_PORT}}", &self.host_port.to_string())
+            .replace("{{WS_PORT}}", &SURFPOOL_WS_INTERNAL_PORT.to_string())
+            .replace("{{WS_HOST_PORT}}", &self.ws_host_port().to_string())
             .replace("{{DATASOURCE_ARGS}}", &datasource_args)
             .replace("{{AIRDROP_ARGS}}", &Self::airdrop_args())
             .replace("{{STATE_ARGS}}", &state_args)
@@ -252,6 +283,9 @@ impl Engine for SolanaEngine {
             name: self.name.clone(),
             kind: "solana".to_string(),
             rpc: format!("http://127.0.0.1:{}", self.host_port),
+            // surfpool serves WS on its own port; advertise it (RPC port + 1) so
+            // subscription clients don't have to guess. Always present.
+            ws: Some(self.ws_url()),
             chain_id: SOLANA_CHAIN_ID.to_string(),
             accounts: Self::accounts(),
             // The SPL test tokens are seeded post-boot via cheatcodes (see
@@ -320,8 +354,11 @@ mod tests {
             assert!(yaml.contains("\"start\", \"--no-tui\""));
             assert!(yaml.contains("\"--offline\""));
             assert!(yaml.contains("\"--no-studio\""));
-            // Published host port maps to the container's 8899.
+            // Published host port maps to the container's 8899, and the WS port
+            // (RPC host port + 1 → 18900) maps to the container's 8900.
             assert!(yaml.contains("\"18899:8899\""));
+            assert!(yaml.contains("\"--ws-port\", \"8900\""));
+            assert!(yaml.contains("\"18900:8900\""));
             assert!(!yaml.contains("{{"), "no placeholder should remain: {yaml}");
             assert!(!yaml.contains("}}"), "no placeholder should remain: {yaml}");
         }
@@ -360,6 +397,8 @@ mod tests {
         let entry = SolanaEngine::surfpool("solana-1", 8899).manifest_entry();
         assert_eq!(entry.kind, "solana");
         assert_eq!(entry.rpc, "http://127.0.0.1:8899");
+        // surfpool serves WS on the RPC port + 1.
+        assert_eq!(entry.ws.as_deref(), Some("ws://127.0.0.1:8900"));
         assert_eq!(entry.chain_id, "localnet");
         assert_eq!(entry.accounts.len(), 3);
         assert_eq!(
@@ -403,8 +442,9 @@ mod tests {
             e.manifest_entry().explorer.as_deref(),
             Some("http://127.0.0.1:18899")
         );
-        // …the collision check sees that extra port…
-        assert_eq!(e.extra_host_ports(), vec![18899]);
+        // …the collision check sees that extra port (alongside the always-on WS
+        // port on RPC + 1)…
+        assert_eq!(e.extra_host_ports(), vec![8900, 18899]);
         // …and Studio is in-process, so no Otterscan pairing is requested.
         assert!(e.explorer_target().is_none());
     }
@@ -420,7 +460,34 @@ mod tests {
             "studio off must not publish a Studio port: {yaml}"
         );
         assert!(e.manifest_entry().explorer.is_none());
-        assert!(e.extra_host_ports().is_empty());
+        // The WS port is always published, so it's the sole extra port here.
+        assert_eq!(e.extra_host_ports(), vec![8900]);
+    }
+
+    #[test]
+    fn ws_rpc_is_always_served_published_and_advertised() {
+        // WS is core RPC, not gated by the explorer flag — present with Studio on
+        // or off, in either state mode, on the RPC host port + 1.
+        for studio in [false, true] {
+            let e = SolanaEngine::surfpool("solana-1", 8899).studio(studio);
+            for mode in [StateMode::Ephemeral, StateMode::Persistent] {
+                let yaml = e.compose_service(mode);
+                assert!(
+                    yaml.contains("\"--ws-port\", \"8900\""),
+                    "surfpool must serve WS: {yaml}"
+                );
+                assert!(
+                    yaml.contains("\"8900:8900\""),
+                    "the WS port must be published on the host (RPC 8899 → 8900): {yaml}"
+                );
+            }
+            // Advertised in the manifest and surfaced to the collision check.
+            assert_eq!(
+                e.manifest_entry().ws.as_deref(),
+                Some("ws://127.0.0.1:8900")
+            );
+            assert!(e.extra_host_ports().contains(&8900));
+        }
     }
 
     #[test]
@@ -506,8 +573,10 @@ mod tests {
     use std::time::Duration;
 
     /// A dedicated high port, away from the other e2e ports, so this can run in
-    /// parallel with the EVM and Starknet docker tests.
-    const SOL_E2E_PORT: u16 = 18990;
+    /// parallel with the EVM and Starknet docker tests. Solana e2e ports are
+    /// spaced 10 apart: each chain now occupies its RPC port *and* RPC + 1 (WS),
+    /// so adjacent slots must not overlap.
+    const SOL_E2E_PORT: u16 = 18900;
 
     /// Minimal JSON-RPC POST to surfpool's `/` endpoint → raw response body.
     fn rpc(port: u16, body: &str) -> String {
@@ -593,7 +662,7 @@ mod tests {
 
     /// A dedicated high port for the Studio-explorer e2e, distinct from the other
     /// Solana e2e ports so it can run in parallel. Its Studio lands on +10000.
-    const SOL_UI_E2E_PORT: u16 = 18992;
+    const SOL_UI_E2E_PORT: u16 = 18910;
 
     #[test]
     fn solana_surfpool_serves_the_studio_explorer() {
@@ -626,10 +695,108 @@ mod tests {
         );
     }
 
+    /// A dedicated high port for the WebSocket e2e, distinct from the other
+    /// Solana e2e ports so it can run in parallel. Its WS lands on +1 (18921).
+    const SOL_WS_E2E_PORT: u16 = 18920;
+
+    /// Open a WebSocket to `port`, send one JSON-RPC `method` (no params), and
+    /// return `(handshake_status_line, first_text_frame_payload)`. A minimal
+    /// hand-rolled client (RFC 6455): a fixed `Sec-WebSocket-Key` and a single
+    /// masked text frame are enough — we don't validate the server's accept hash,
+    /// only that it upgrades and answers the subscription.
+    fn ws_call(port: u16, method: &str) -> (String, String) {
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        // Upgrade handshake. The key is the canonical RFC 6455 example value —
+        // any base64 of 16 bytes works, and we don't check the accept response.
+        let req = format!(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n\
+             Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\n\r\n"
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+
+        // Read until the header terminator, keeping any bytes of the first data
+        // frame that arrive in the same segment.
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 1024];
+        let header_end = loop {
+            let n = stream.read(&mut tmp).unwrap();
+            assert!(n > 0, "connection closed during WS handshake");
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let status_line = String::from_utf8_lossy(&buf[..buf.len().min(64)])
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
+
+        // Send the request as a masked client text frame (payload < 126 bytes).
+        let payload = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}"}}"#).into_bytes();
+        let mask = [0x12u8, 0x34, 0x56, 0x78];
+        let mut frame = vec![0x81, 0x80 | payload.len() as u8];
+        frame.extend_from_slice(&mask);
+        frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+        stream.write_all(&frame).unwrap();
+
+        // Read the server's reply frame (unmasked) — reuse any leftover bytes
+        // past the handshake, then top up from the socket.
+        let mut data = buf[header_end..].to_vec();
+        while data.len() < 2 {
+            let n = stream.read(&mut tmp).unwrap();
+            assert!(n > 0, "connection closed before WS reply");
+            data.extend_from_slice(&tmp[..n]);
+        }
+        let len = (data[1] & 0x7f) as usize;
+        while data.len() < 2 + len {
+            let n = stream.read(&mut tmp).unwrap();
+            assert!(n > 0, "connection closed mid WS frame");
+            data.extend_from_slice(&tmp[..n]);
+        }
+        let reply = String::from_utf8_lossy(&data[2..2 + len]).to_string();
+        (status_line, reply)
+    }
+
+    #[test]
+    fn solana_surfpool_serves_the_websocket_rpc() {
+        if !docker_available() {
+            eprintln!("skipping solana ws e2e: docker unavailable");
+            return;
+        }
+        let net = Localnet::boot_solana("t-solana-ws", SOL_WS_E2E_PORT);
+
+        // surfpool publishes WS on the RPC host port + 1. A real client upgrade +
+        // subscription proves the port is published and subscriptions work from
+        // the host — the whole point of exposing 8900.
+        let ws_port = SOL_WS_E2E_PORT + 1;
+        let (status, reply) = ws_call(ws_port, "slotSubscribe");
+        assert!(
+            status.contains("101"),
+            "WS upgrade should return 101 Switching Protocols, got: {status}"
+        );
+        // slotSubscribe returns a numeric subscription id under `result`.
+        assert!(
+            reply.contains("\"result\""),
+            "slotSubscribe should return a subscription id, got: {reply}"
+        );
+
+        // The manifest advertises the WS endpoint at that port.
+        let manifest = Manifest::read(&manifest_path(net.base())).unwrap();
+        assert_eq!(
+            manifest.chains[0].ws.as_deref(),
+            Some(format!("ws://127.0.0.1:{ws_port}").as_str())
+        );
+    }
+
     /// Dedicated ports for the forking e2e: an origin chain and the chain that
     /// forks it. Distinct from the other Solana e2e ports so they run in parallel.
-    const SOL_FORK_ORIGIN_PORT: u16 = 18994;
-    const SOL_FORK_CHILD_PORT: u16 = 18995;
+    const SOL_FORK_ORIGIN_PORT: u16 = 18930;
+    const SOL_FORK_CHILD_PORT: u16 = 18940;
 
     #[test]
     fn solana_chain_can_fork_a_live_network() {
@@ -695,7 +862,7 @@ mod tests {
     }
 
     /// A dedicated port for the persistence cycle, away from the other e2e ports.
-    const SOL_PERSIST_PORT: u16 = 18996;
+    const SOL_PERSIST_PORT: u16 = 18950;
 
     /// End-to-end persistence: a faucet top-up survives `down` → `up --resume`
     /// (surfpool restores its SQLite surfnet db), and `up --reset` discards it.

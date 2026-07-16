@@ -179,6 +179,7 @@ mod tests {
             name: "anvil-1".into(),
             kind: "evm".into(),
             rpc: "http://127.0.0.1:8545".into(),
+            ws: None,
             chain_id: "31337".into(),
             accounts: vec![Account {
                 address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".into(),

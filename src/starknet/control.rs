@@ -168,6 +168,7 @@ mod tests {
             name: "starknet-1".into(),
             kind: "starknet".into(),
             rpc: "http://127.0.0.1:5050/rpc".into(),
+            ws: None,
             chain_id: "0x534e5f5345504f4c4941".into(),
             accounts: vec![Account {
                 address: "0x064b48806902a367c8598f4f95c305e8c1a1acba5f082d294a43793113115691"

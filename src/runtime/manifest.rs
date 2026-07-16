@@ -19,6 +19,12 @@ pub struct ChainEntry {
     pub name: String,
     pub kind: String,
     pub rpc: String,
+    /// WebSocket RPC endpoint, when the chain serves one on a port *distinct*
+    /// from its HTTP RPC. Solana (surfpool) serves WS on the HTTP port + 1, so
+    /// it's advertised here; EVM/Starknet serve WS on the same port as HTTP
+    /// (derivable from `rpc`), so they leave it unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ws: Option<String>,
     /// Chain identifier as a string: a decimal number for EVM chains (e.g.
     /// "31337"), or a felt for Starknet (e.g. "0x534e5f5345504f4c4941"). It's a
     /// string because Starknet chain IDs are felts that overflow `u64`.
@@ -127,6 +133,7 @@ mod tests {
             name: "anvil-1".into(),
             kind: "evm".into(),
             rpc: "http://127.0.0.1:8545".into(),
+            ws: None,
             chain_id: "31337".into(),
             accounts: vec![Account {
                 address: "0xabc".into(),
@@ -193,6 +200,23 @@ mod tests {
         // And a manifest without the field still parses (defaults to None).
         let loaded: Manifest = serde_json::from_str(&json).unwrap();
         assert!(loaded.chains[0].explorer.is_none());
+    }
+
+    #[test]
+    fn ws_roundtrips_and_is_omitted_when_absent() {
+        // A distinct WS endpoint survives a write/read cycle...
+        let mut m = sample();
+        m.chains[0].ws = Some("ws://127.0.0.1:8900".into());
+        let loaded: Manifest = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        assert_eq!(loaded.chains[0].ws.as_deref(), Some("ws://127.0.0.1:8900"));
+
+        // ...and an absent one neither serializes nor blocks parsing (old
+        // manifests written before the field still load).
+        m.chains[0].ws = None;
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(!json.contains("\"ws\""), "None ws must not serialize");
+        let loaded: Manifest = serde_json::from_str(&json).unwrap();
+        assert!(loaded.chains[0].ws.is_none());
     }
 
     #[test]

@@ -441,6 +441,9 @@ pub(crate) fn up_in(
             "   {} [{}]  {}  (chainId {})",
             chain.name, chain.kind, chain.rpc, chain.chain_id
         );
+        if let Some(ws) = &chain.ws {
+            println!("      ws        {ws}");
+        }
         if let Some(fork) = &chain.fork {
             println!("      fork      {fork}");
         }
@@ -535,6 +538,9 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
     for chain in &manifest.chains {
         println!("  {} [{}]", chain.name, chain.kind);
         println!("     rpc      {}", chain.rpc);
+        if let Some(ws) = &chain.ws {
+            println!("     ws       {ws}");
+        }
         println!("     chainId  {}", chain.chain_id);
         if let Some(account) = chain.accounts.first() {
             println!("     account  {}", account.address);
@@ -958,6 +964,7 @@ mod tests {
             name: "anvil-1".into(),
             kind: "evm".into(),
             rpc: "http://127.0.0.1:8545".into(),
+            ws: None,
             chain_id: "31337".into(),
             accounts: vec![Account {
                 address: "0xabc".into(),

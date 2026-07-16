@@ -12,6 +12,14 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Solana WebSocket RPC** — surfpool's WebSocket endpoint is now published, so
+  subscriptions (`slotSubscribe`, `logsSubscribe`) and `confirmTransaction` work
+  from the host (previously only the HTTP RPC on 8899 was mapped). It's published
+  on the HTTP RPC port **+ 1** (`solana-1` on 8899 → WS on 8900), following
+  Solana's own convention — clients like `@solana/web3.js` derive the WS URL from
+  the RPC URL, so they connect automatically. Always served (not gated by
+  `--bare`), advertised via a new `ws` field in the `status`/manifest, and folded
+  into the cross-chain port collision check.
 - **Solana block explorer** — every Solana chain now serves surfpool's built-in
   **Studio** UI, on by default (skipped by `up --bare`), matching the EVM
   (Otterscan) and Starknet (`--ui`) explorers. Unlike the Starknet UI — served at

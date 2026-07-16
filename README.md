@@ -70,6 +70,9 @@ Early WIP, but the **EVM stack works end to end today**. See the
       Solana chain's state across restarts, like the EVM/Starknet chains
 - [x] Solana block explorer — surfpool's built-in Studio UI, on by default,
       served in-process on its own published port
+- [x] Solana WebSocket RPC — surfpool's WS endpoint published on the RPC port + 1
+      (Solana's convention), so subscriptions / `confirmTransaction` work from the
+      host; advertised in `status`/manifest
 
 **Planned**
 
@@ -453,10 +456,16 @@ points straight at it. Poke it directly:
 
 ```sh
 wharfnet up --bare
-# standard Solana JSON-RPC on :8899
+# standard Solana JSON-RPC on :8899, WebSocket RPC on :8900
 curl -s -X POST http://127.0.0.1:8899 \
   -d '{"jsonrpc":"2.0","id":1,"method":"getHealth","params":[]}'   # -> {"result":"ok"}
 ```
+
+The **WebSocket RPC** is published on the HTTP RPC port + 1 (`solana-1` → `ws://127.0.0.1:8900`),
+following Solana's own convention, so clients like `@solana/web3.js` that derive
+the WS URL from the RPC URL just work — subscriptions (`slotSubscribe`,
+`logsSubscribe`) and `confirmTransaction` all run against the host. It's always
+served (not gated by `--bare`) and recorded in the manifest.
 
 Each Solana chain comes with **deterministic funded dev accounts** — three
 keypairs derived from documented seeds (`sha256("wharfnet-solana-dev-<i>")` →

@@ -282,6 +282,7 @@ impl Engine for StarknetEngine {
             kind: "starknet".to_string(),
             // devnet serves JSON-RPC at /rpc (and /).
             rpc: format!("http://127.0.0.1:{}/rpc", self.host_port),
+            ws: None,
             chain_id: SN_SEPOLIA.to_string(),
             accounts: Self::accounts(),
             tokens: if forked { Vec::new() } else { Self::tokens() },

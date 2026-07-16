@@ -216,6 +216,7 @@ mod tests {
             name: "solana-1".into(),
             kind: "solana".into(),
             rpc: "http://127.0.0.1:8899".into(),
+            ws: Some("ws://127.0.0.1:8900".into()),
             chain_id: "localnet".into(),
             accounts: vec![Account {
                 address: "9akreS78QY4sx2d3aXHdrPCv1rQay1JXoiVWXK6rP9jh".into(),
@@ -287,7 +288,9 @@ mod tests {
     use std::net::TcpStream;
     use std::time::Duration;
 
-    const SOL_FAUCET_PORT: u16 = 18993;
+    // Spaced 10 from the other Solana e2e ports, since each chain now also
+    // publishes RPC + 1 for WS.
+    const SOL_FAUCET_PORT: u16 = 18980;
     /// A fresh, non-dev recipient — starts at zero for SOL and every token.
     const RECIPIENT: &str = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 

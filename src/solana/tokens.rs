@@ -207,8 +207,9 @@ mod tests {
     use std::net::TcpStream;
     use std::time::Duration;
 
-    /// A dedicated high port, away from the other Solana e2e ports.
-    const SOL_TOKENS_PORT: u16 = 18992;
+    /// A dedicated high port, away from the other Solana e2e ports (spaced 10
+    /// apart, since each chain now also publishes RPC + 1 for WS).
+    const SOL_TOKENS_PORT: u16 = 18970;
 
     fn rpc(port: u16, body: &str) -> serde_json::Value {
         let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();

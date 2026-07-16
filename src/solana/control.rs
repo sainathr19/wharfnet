@@ -185,6 +185,7 @@ mod tests {
             name: "solana-1".into(),
             kind: "solana".into(),
             rpc: "http://127.0.0.1:8899".into(),
+            ws: Some("ws://127.0.0.1:8900".into()),
             chain_id: "localnet".into(),
             accounts: vec![Account {
                 address: "9akreS78QY4sx2d3aXHdrPCv1rQay1JXoiVWXK6rP9jh".into(),
@@ -253,8 +254,10 @@ mod tests {
     use std::thread::sleep;
     use std::time::Duration;
 
-    /// A dedicated high port, away from the other e2e ports.
-    const SOL_CONTROL_PORT: u16 = 18991;
+    /// A dedicated high port, away from the other e2e ports. Solana chains now
+    /// also publish RPC + 1 (WS), so these ports are spaced 10 apart to keep
+    /// adjacent slots from overlapping.
+    const SOL_CONTROL_PORT: u16 = 18960;
 
     #[test]
     fn solana_controls_drive_a_live_chain() {
