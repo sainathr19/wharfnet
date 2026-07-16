@@ -42,9 +42,9 @@ control, forking, explorer, persistence) — live at
 | **Starknet** (`starknet-1`)    | starknet-devnet | [/starknet](https://sainathr19.github.io/wharfnet/starknet) |
 | **Solana** (`solana-1`)        | surfpool        | [/solana](https://sainathr19.github.io/wharfnet/solana)     |
 
-The site is a [Nextra](https://nextra.site) app under [`website/`](website/),
+The site is a [Nextra](https://nextra.site) app under [`landing/`](landing/),
 deployed to GitHub Pages on every push to `main` (source pages live in
-[`website/content/`](website/content/)).
+[`landing/content/`](landing/content/)).
 
 ## Prerequisites
 

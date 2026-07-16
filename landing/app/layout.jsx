@@ -36,7 +36,7 @@ export default async function RootLayout({ children }) {
           navbar={navbar}
           footer={footer}
           pageMap={await getPageMap()}
-          docsRepositoryBase="https://github.com/sainathr19/wharfnet/tree/main/website"
+          docsRepositoryBase="https://github.com/sainathr19/wharfnet/tree/main/landing"
           sidebar={{ defaultMenuCollapseLevel: 1 }}
         >
           {children}
