@@ -1,0 +1,190 @@
+/* Feature grid on the landing page — an icon + label row, matching the
+   three-up highlight grid on the reference docs site. */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.25rem 2rem;
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+}
+
+@media (max-width: 768px) {
+  .feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.feature-icon {
+  flex-shrink: 0;
+  color: hsl(var(--nextra-primary-hue) 90% 55%);
+  margin-top: 0.15rem;
+}
+
+.feature-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.feature-title {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.feature-desc {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: hsl(var(--nextra-content-secondary, 220 5% 55%));
+  opacity: 0.75;
+}
+
+/* ── Changelog timeline ─────────────────────────────────────────────── */
+
+.cl-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.cl-filters-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  opacity: 0.6;
+  margin-right: 0.25rem;
+}
+
+.cl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0.28rem 0.7rem;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.cl-chip:hover {
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+}
+
+.cl-chip[data-active='true'] {
+  border-color: var(--cat);
+  background: color-mix(in srgb, var(--cat) 14%, transparent);
+  color: var(--cat);
+}
+
+.cl-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+.cl-timeline {
+  display: flex;
+  flex-direction: column;
+  margin-top: 1rem;
+}
+
+.cl-entry {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  gap: 2.5rem;
+  padding: 2.25rem 0;
+  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.cl-entry:first-child {
+  border-top: 0;
+  padding-top: 1.25rem;
+}
+
+.cl-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.cl-date {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.22rem 0.6rem;
+  border-radius: 0.45rem;
+  color: var(--cat);
+  background: color-mix(in srgb, var(--cat) 14%, transparent);
+  white-space: nowrap;
+}
+
+.cl-cat {
+  font-size: 0.85rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.cl-tag {
+  font-size: 0.8rem;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-body h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.cl-changes {
+  margin: 0;
+  padding-left: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cl-changes li {
+  line-height: 1.55;
+  opacity: 0.8;
+}
+
+.cl-changes li::marker {
+  color: color-mix(in srgb, currentColor 40%, transparent);
+}
+
+.cl-empty {
+  padding: 2.5rem 0;
+  opacity: 0.6;
+}
+
+@media (max-width: 768px) {
+  .cl-entry {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+  .cl-meta {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+}

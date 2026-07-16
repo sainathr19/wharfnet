@@ -1,0 +1,130 @@
+---
+title: Starknet chains
+---
+
+import { Callout } from 'nextra/components'
+
+# Starknet chains
+
+`wharfnet up` boots a
+[`starknet-devnet`](https://github.com/0xSpaceShard/starknet-devnet) chain by
+default (`starknet-1` on `:5050`), right next to the two EVM chains — one command,
+one manifest, one `status`. To run without it, write a `wharfnet.toml` that omits
+the Starknet chain (a config replaces the defaults).
+
+```sh
+wharfnet up --bare
+curl http://127.0.0.1:5050/is_alive                                   # -> Alive!!!
+curl -s -X POST http://127.0.0.1:5050/rpc \
+  -d '{"jsonrpc":"2.0","id":1,"method":"starknet_chainId","params":[]}'  # -> SN_SEPOLIA
+```
+
+Each Starknet chain comes with **deterministic predeployed accounts** (fixed
+`--seed`, so they're identical every boot) and the standard **ETH and STRK fee
+tokens** at their canonical addresses — all recorded in the manifest. The RPC is
+served at `http://127.0.0.1:<port>/rpc`, and readiness is checked against
+devnet's `/is_alive` endpoint.
+
+## Test tokens
+
+Every Starknet chain also boots with a set of **Cairo test tokens** pre-deployed
+at fixed addresses (identical on every chain), each with a **public
+`mint(recipient, amount)`** and seeded onto the dev accounts. As on the EVM side,
+the first two are standard and the rest are deliberately **"weird"** for
+token-integration testing:
+
+| Token | Decimals | Address | Behaviour |
+| ----- | -------- | ------- | --------- |
+| USDC  | 6  | `0x040b582f9ba878be8e78a6ddc665dfdfd55a4deae9ceeb40115abcfa1f8df686` | standard |
+| WBTC  | 8  | `0x029a79ea0c5716d63250a0bbf2462509f3c0eed9d29a2e1c02c63fa7b2b1db66` | standard |
+| FEE   | 18 | `0x07edc0e8738c7804ad087344c1c54d817f739dd4179f1dd4e11ea5badada47aa` | fee-on-transfer (1% burned on `transfer`) |
+| REB   | 18 | `0x06e94ed66ea18ea06a9bed118a8d6ebc3cc19d31ed025bd5abadd3477d300500` | rebasing (`rebase(factor)` rescales balances) |
+
+Sources live in `src/resources/contracts/starknet/` (self-contained Cairo, no
+OpenZeppelin dependency). The EVM stack's USDT-style no-return token has no
+analogue — Cairo's ERC-20 ABI returns `bool` by the standard. Under the hood the
+tokens are baked into a devnet **replay log** that `wharfnet up` re-executes on
+boot; regenerate it after editing the sources with
+`./scripts/gen-starknet-token-state.sh` (needs `scarb` + `cargo` — the
+declare/deploy step runs through `examples/gen_starknet_tokens.rs`, using the same
+JSON-RPC-0.10 [`starknet-rust`](https://github.com/software-mansion/starknet-rust)
+client the faucet does).
+
+## Faucet
+
+The unified `faucet` command works on Starknet chains too:
+
+```sh
+# ETH + STRK + every Cairo test token, on every Starknet chain
+wharfnet faucet starknet 0x05a1... 100
+
+# just one token, on a specific chain
+wharfnet faucet starknet-1 0x05a1... 50 --token WBTC
+```
+
+ETH and STRK are minted through devnet's mint cheat; the Cairo test tokens are
+minted by a **signed invoke** of their public `mint`, submitted through the first
+predeployed dev account (it only pays gas — the recipient needs no key). Amounts
+are whole units, scaled by each token's decimals. Funding is additive, so repeat
+top-ups accumulate.
+
+## Chain control
+
+The Starknet chain-control verbs live under `wharfnet starknet`, wrapping
+starknet-devnet's cheat JSON-RPC. Each takes a `--chain` selector (`starknet` for
+every Starknet chain, or a name like `starknet-1`; defaults to `starknet`):
+
+```sh
+wharfnet starknet mine 10                # create 10 blocks
+wharfnet starknet increase-time 86400    # fast-forward time by a day
+wharfnet starknet warp 1893456000        # set the chain to an absolute Unix time
+wharfnet starknet impersonate 0x0123…    # forked chains only (see below)
+wharfnet starknet impersonate 0x0123… --stop
+```
+
+<Callout type="warning">
+  Two differences from the EVM verbs, both from starknet-devnet: there's **no
+  `snapshot`/`revert`** (devnet has no numbered-snapshot mechanism, only block
+  abort), and **`impersonate` works only on a forked chain** — devnet impersonates
+  accounts that exist on the forked origin, so on a plain local chain the command
+  is refused with a hint to set `fork_url` first.
+</Callout>
+
+## Forking
+
+Set `fork_url` (and optionally `fork_block`) on a `kind = "starknet"` chain and
+it boots as a fork via starknet-devnet's `--fork-network`, mirroring the origin's
+contracts and balances. The same `${VAR}` expansion and redaction as the EVM side
+apply — the key never lands in the file or the manifest:
+
+```toml filename="wharfnet.toml"
+[[chains]]
+name = "sn-fork"
+kind = "starknet"
+port = 5050
+fork_url = "${STARKNET_RPC}"   # a Starknet JSON-RPC endpoint (e.g. Sepolia)
+fork_block = 900000            # optional; omit to track the latest block
+```
+
+The predeployed dev accounts still apply (devnet funds them over the fork), so
+you can send transactions against real forked state right away.
+
+## Block explorer
+
+Each Starknet chain boots with starknet-devnet's built-in web UI explorer,
+served **in-process** at `/ui` on the chain's own RPC port (Otterscan is
+EVM-only) — no extra container:
+
+| Chain      | RPC                         | Explorer                   |
+| ---------- | --------------------------- | -------------------------- |
+| starknet-1 | `http://127.0.0.1:5050/rpc` | `http://127.0.0.1:5050/ui` |
+
+The URL is recorded in the manifest and printed by `status`. Pass `--bare` to
+skip it.
+
+## Persistence
+
+Starknet chains persist across `up --resume` / `up --reset` like the EVM chains:
+devnet dumps its replay log on every block (one entry per transaction) under
+`.wharfnet/state/`, replayed on the next `--resume`. See
+[Resuming a session](/getting-started#resuming-a-session) for the shared model.

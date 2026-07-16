@@ -1,0 +1,54 @@
+---
+title: Contributing
+---
+
+import { Callout } from 'nextra/components'
+
+# Contributing
+
+Contributions are welcome — issues and PRs alike.
+
+## Workflow
+
+Work lands on `main` through a PR (see the branch rules in
+[RELEASING.md](https://github.com/sainathr19/wharfnet/blob/main/RELEASING.md));
+`main` is protected. Keep changes focused and update the
+[CHANGELOG](https://github.com/sainathr19/wharfnet/blob/main/CHANGELOG.md)
+`## [Unreleased]` section with anything user-facing.
+
+## Before you push
+
+CI runs formatting, Clippy, tests, and a dependency audit (see
+`.github/workflows/`). Run them locally first:
+
+```sh
+cargo fmt --all
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+<Callout type="info">
+  Some tests boot real containers and need a running Docker daemon.
+</Callout>
+
+## Adding a chain kind or capability
+
+Chains implement the `Engine` trait in `src/runtime/engine.rs`; the per-chain
+code lives under `src/<kind>/`. The per-chain guides ([EVM](/evm),
+[Starknet](/starknet), [Solana](/solana)) describe how each stack wires up
+tokens, faucet, forking, and its explorer — a good map before you extend one.
+
+## Editing these docs
+
+This site is a [Nextra](https://nextra.site) app under `website/`. To run it
+locally:
+
+```sh
+cd website
+pnpm install
+pnpm dev
+```
+
+Pages are MDX files under `website/content/`; the sidebar order is set in
+`website/content/_meta.js`. Push to `main` and a GitHub Actions workflow builds
+and deploys the site to GitHub Pages.
