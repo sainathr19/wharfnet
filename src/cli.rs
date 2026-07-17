@@ -614,17 +614,21 @@ mod tests {
         );
     }
 
-    /// Full lifecycle through the public dispatch. Covers `run`'s Up/Down/Status
-    /// arms and the orchestrator's Docker paths. Self-skips without Docker.
+    /// Full lifecycle through the public dispatch. Boots the default topology
+    /// (EVM + Starknet + Solana) and drives every command — status, the
+    /// chain-control verbs, faucet, and logs — so `run`'s arms and the
+    /// default-`.wharfnet` control wrappers are exercised against a real
+    /// localnet. Owns the repo-root state dir for the whole test, so there's no
+    /// races with other tests. Self-skips without Docker.
     #[test]
-    fn run_up_status_down_lifecycle_with_docker() {
+    fn run_full_lifecycle_and_controls_with_docker() {
         if !docker_available() {
             eprintln!("skipping lifecycle test: docker unavailable");
             return;
         }
         let _ = run(Commands::Down); // clean any prior state
-        // Bare keeps this lifecycle check focused on the chains (the explorer
-        // path is covered by unit tests), so it doesn't pull the Otterscan image.
+
+        // Bare skips the explorers so this doesn't pull the Otterscan image.
         run(Commands::Up {
             resume: false,
             reset: false,
@@ -633,6 +637,120 @@ mod tests {
         })
         .expect("up should succeed");
         run(Commands::Status).expect("status should succeed");
+
+        // `mine` exists for every kind.
+        let evm = |c| Commands::Evm { command: c };
+        let sn = |c| Commands::Starknet { command: c };
+        let sol = |c| Commands::Solana { command: c };
+        let future = 4_102_444_800; // year 2100 — satisfies forward-only warps
+
+        run(evm(EvmCommands::Mine {
+            count: 2,
+            chain: "anvil-1".into(),
+        }))
+        .expect("evm mine");
+        run(sn(StarknetCommands::Mine {
+            count: 2,
+            chain: "starknet-1".into(),
+        }))
+        .expect("starknet mine");
+        run(sol(SolanaCommands::Mine {
+            count: 2,
+            chain: "solana-1".into(),
+        }))
+        .expect("solana mine");
+
+        // EVM: increase-time, warp, impersonate (+stop), snapshot, revert.
+        run(evm(EvmCommands::IncreaseTime {
+            seconds: 60,
+            chain: "anvil-1".into(),
+        }))
+        .expect("evm increase-time");
+        run(evm(EvmCommands::Warp {
+            timestamp: future,
+            chain: "anvil-1".into(),
+        }))
+        .expect("evm warp");
+        let whale = "0x0000000000000000000000000000000000000001".to_string();
+        run(evm(EvmCommands::Impersonate {
+            address: whale.clone(),
+            stop: false,
+            chain: "anvil-1".into(),
+        }))
+        .expect("evm impersonate");
+        run(evm(EvmCommands::Impersonate {
+            address: whale,
+            stop: true,
+            chain: "anvil-1".into(),
+        }))
+        .expect("evm stop impersonate");
+        run(evm(EvmCommands::Snapshot {
+            chain: "anvil-1".into(),
+        }))
+        .expect("evm snapshot");
+        // Revert to the first snapshot; ignore the result since the id may have
+        // advanced — the point is to exercise the wrapper.
+        let _ = run(evm(EvmCommands::Revert {
+            id: "0x1".into(),
+            chain: "anvil-1".into(),
+        }));
+
+        // Starknet: increase-time, warp. (impersonate needs a fork — expect Err.)
+        run(sn(StarknetCommands::IncreaseTime {
+            seconds: 60,
+            chain: "starknet-1".into(),
+        }))
+        .expect("starknet increase-time");
+        run(sn(StarknetCommands::Warp {
+            timestamp: future,
+            chain: "starknet-1".into(),
+        }))
+        .expect("starknet warp");
+        assert!(
+            run(sn(StarknetCommands::Impersonate {
+                address: "0x1".into(),
+                stop: false,
+                chain: "starknet-1".into(),
+            }))
+            .is_err(),
+            "starknet impersonate needs a forked chain"
+        );
+
+        // Solana: increase-time, warp, pause/resume clock.
+        run(sol(SolanaCommands::IncreaseTime {
+            seconds: 60,
+            chain: "solana-1".into(),
+        }))
+        .expect("solana increase-time");
+        run(sol(SolanaCommands::Warp {
+            timestamp: future + 1000,
+            chain: "solana-1".into(),
+        }))
+        .expect("solana warp");
+        run(sol(SolanaCommands::PauseClock {
+            chain: "solana-1".into(),
+        }))
+        .expect("solana pause-clock");
+        run(sol(SolanaCommands::ResumeClock {
+            chain: "solana-1".into(),
+        }))
+        .expect("solana resume-clock");
+
+        // Faucet (native + tokens) and logs, both through the dispatch.
+        run(Commands::Faucet {
+            chain: "anvil-1".into(),
+            address: "0x0000000000000000000000000000000000000abc".into(),
+            amount: "10".into(),
+            token: None,
+            raw: false,
+        })
+        .expect("evm faucet");
+        run(Commands::Logs {
+            chain: Some("anvil-1".into()),
+            follow: false,
+        })
+        .expect("logs");
+
         run(Commands::Down).expect("down should succeed");
     }
 
