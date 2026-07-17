@@ -41,6 +41,8 @@ control, forking, explorer, persistence) — live at
 | **EVM** (`anvil-1`, `anvil-2`) | Anvil           | [/evm](https://sainathr19.github.io/wharfnet/evm)           |
 | **Starknet** (`starknet-1`)    | starknet-devnet | [/starknet](https://sainathr19.github.io/wharfnet/starknet) |
 | **Solana** (`solana-1`)        | surfpool        | [/solana](https://sainathr19.github.io/wharfnet/solana)     |
+| **Bitcoin** (`bitcoin-1`)      | bitcoind (regtest)  | see [Configuration](#configuration) |
+| **Litecoin** (`litecoin-1`)    | litecoind (regtest) | see [Configuration](#configuration) |
 
 The site is a [Nextra](https://nextra.site) app under [`landing/`](landing/),
 deployed to GitHub Pages on every push to `main` (source pages live in
@@ -105,11 +107,12 @@ guides linked [above](#documentation).
 
 ## Configuration
 
-wharfnet runs zero-config — two Anvil chains, a Starknet chain, and a Solana
-chain by default (`anvil-1` :8545, `anvil-2` :8546, `starknet-1` :5050,
-`solana-1` :8899). To customise the chain topology — including dropping a chain —
-write your own `wharfnet.toml` in your project root (a config replaces the
-defaults entirely):
+wharfnet runs zero-config — two Anvil chains, a Starknet chain, a Solana chain,
+and Bitcoin + Litecoin regtest chains by default (`anvil-1` :8545, `anvil-2`
+:8546, `starknet-1` :5050, `solana-1` :8899, `bitcoin-1` :18443, `litecoin-1`
+:19443). To customise the chain topology — including dropping a chain — write your
+own `wharfnet.toml` in your project root (a config replaces the defaults
+entirely):
 
 ```toml
 # wharfnet.toml — omit entirely for the built-in defaults
@@ -128,13 +131,31 @@ port = 5050         # RPC is published at http://127.0.0.1:5050/rpc
 name = "sol-1"
 kind = "solana"     # boots a surfpool chain
 port = 8899
+
+[[chains]]
+name = "bitcoin-1"
+kind = "bitcoin"    # boots a bitcoind regtest chain
+port = 18443
+
+[[chains]]
+name = "litecoin-1"
+kind = "litecoin"   # boots a litecoind regtest chain
+port = 19443
 ```
 
 Each chain needs a unique `name` and `port`; `kind` defaults to `evm` and may be
-`starknet` or `solana`. EVM chains also need a numeric `chain_id`; Starknet and
-Solana chains omit it. Accounts and test tokens come from the baked presets and
-aren't configured here. Run `wharfnet compose` to see the resolved setup — and to
-catch config errors — without booting anything.
+`starknet`, `solana`, `bitcoin`, or `litecoin`. EVM chains also need a numeric
+`chain_id`; the others omit it. Accounts and test tokens come from the baked
+presets and aren't configured here. Run `wharfnet compose` to see the resolved
+setup — and to catch config errors — without booting anything.
+
+Bitcoin and Litecoin run their Core daemons in **regtest** with fixed dev RPC
+credentials (`wharfnet:wharfnet`), and at boot each mines a spendable balance into
+a `wharfnet` wallet. Fund any address with `wharfnet faucet bitcoin-1 <addr>
+<amount>` (native coin only — UTXO chains carry no test tokens), and mine blocks
+on demand with `wharfnet bitcoin mine <n>` / `wharfnet litecoin mine <n>`. They
+don't fork (`fork_url` is rejected) and run fresh every boot (`--resume`/`--reset`
+don't apply).
 
 By default wharfnet reads `./wharfnet.toml`. Point at a different file with
 `--config <path>` (or `-c`) on `up`/`compose`, or the `WHARFNET_CONFIG` env var:

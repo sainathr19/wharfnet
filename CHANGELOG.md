@@ -12,6 +12,28 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **Bitcoin & Litecoin chains** — wharfnet can now boot Bitcoin (`bitcoin`) and
+  Litecoin (`litecoin`) chains, each running its Core daemon in **regtest** from a
+  pinned image (`bitcoin/bitcoin:29`, `uphold/litecoin-core:0.21`). Litecoin is a
+  Bitcoin fork with an identical JSON-RPC, so both are served by one `UtxoEngine`.
+  At boot each chain creates a `wharfnet` wallet and mines 101 blocks to it, so a
+  coinbase matures and the address holds a spendable 50-coin balance (advertised
+  in the `status`/manifest, the UTXO analogue of the pre-funded EVM/Solana dev
+  accounts). The RPC is published with fixed dev credentials (`wharfnet:wharfnet`)
+  embedded in the manifest `rpc` URL. Both are on by default — `wharfnet up` now
+  boots `bitcoin-1` (:18443) and `litecoin-1` (:19443) alongside the EVM, Starknet,
+  and Solana chains — and can be dropped or reconfigured via `wharfnet.toml`.
+
+  - **Faucet** — `wharfnet faucet bitcoin-1 <address> <amount>` sends native coin
+    from the boot wallet and mines one block to confirm; `--raw` treats the amount
+    as satoshis. UTXO chains carry no test tokens, so only the native coin is
+    funded (`--token BTC`/`LTC`, or omit).
+  - **Chain control** — `wharfnet bitcoin mine <n>` / `wharfnet litecoin mine <n>`
+    produce blocks on demand (regtest `generatetoaddress`). There is no
+    time-travel or snapshot analogue for a UTXO chain.
+  - **Not yet**: forking (regtest is standalone — `fork_url` is rejected) and
+    persistence (the datadir stays in-container, so every boot is fresh;
+    `--resume`/`--reset` are no-ops for these chains). Both may land later.
 - **Solana WebSocket RPC** — surfpool's WebSocket endpoint is now published, so
   subscriptions (`slotSubscribe`, `logsSubscribe`) and `confirmTransaction` work
   from the host (previously only the HTTP RPC on 8899 was mapped). It's published

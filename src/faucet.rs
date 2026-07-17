@@ -51,6 +51,9 @@ pub(crate) fn run_in(
             }
             "starknet" => crate::starknet::faucet::fund_chain(chain, address, amount, token, raw)?,
             "solana" => crate::solana::faucet::fund_chain(chain, address, amount, token, raw)?,
+            "bitcoin" | "litecoin" => {
+                crate::utxo::faucet::fund_chain(chain, address, amount, token, raw)?
+            }
             other => bail!(
                 "faucet is not yet supported for {other} chains (chain '{}')",
                 chain.name

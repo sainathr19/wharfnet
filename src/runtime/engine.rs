@@ -34,6 +34,13 @@ pub enum HealthProbe {
     /// POST a JSON-RPC request calling `method` and consider the chain ready once
     /// the response carries a `result` (used by EVM chains, e.g. `eth_chainId`).
     JsonRpc { method: &'static str },
+    /// Like [`JsonRpc`](Self::JsonRpc) but sends an HTTP Basic `Authorization`
+    /// header — for RPC endpoints that require auth (bitcoind/litecoind, whose
+    /// regtest RPC answers `getblockchaininfo` only with credentials).
+    JsonRpcAuth {
+        method: &'static str,
+        authorization: &'static str,
+    },
     /// GET `path` and consider the chain ready on an HTTP `200` (used by
     /// Starknet-devnet's `/is_alive`).
     HttpGet { path: &'static str },

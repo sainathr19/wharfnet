@@ -3,7 +3,8 @@
 //! When a `wharfnet.toml` is present in the working directory it defines the
 //! chain topology — which chains to boot and their ports, chain IDs, and block
 //! times. Without one, the built-in defaults are used (two Anvil EVM chains, a
-//! Starknet chain, and a Solana chain), so wharfnet stays zero-config.
+//! Starknet chain, a Solana chain, and Bitcoin + Litecoin regtest chains), so
+//! wharfnet stays zero-config.
 //!
 //! Accounts and test tokens are not configurable here: they come from each
 //! engine's baked state (see the per-kind `engine.rs`).
@@ -136,6 +137,25 @@ impl Default for Config {
                     kind: "solana".to_string(),
                     port: 8899,
                     // Solana uses surfpool's local surfnet identity ("localnet").
+                    chain_id: None,
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+                ChainConfig {
+                    name: "bitcoin-1".to_string(),
+                    kind: "bitcoin".to_string(),
+                    port: 18443,
+                    // regtest has no numeric chain id (its network name identifies it).
+                    chain_id: None,
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+                ChainConfig {
+                    name: "litecoin-1".to_string(),
+                    kind: "litecoin".to_string(),
+                    port: 19443,
                     chain_id: None,
                     block_time: 1,
                     fork_url: None,
@@ -295,8 +315,20 @@ fn validate(config: &Config) -> Result<()> {
                     );
                 }
             }
+            "bitcoin" | "litecoin" => {
+                // UTXO chains run bitcoind/litecoind in regtest — no numeric
+                // chain_id (like Starknet/Solana). Regtest is a standalone chain,
+                // not a copy-on-read fork of a live network, so forking is refused.
+                if c.fork_url.is_some() {
+                    bail!(
+                        "chain '{}': {} runs in regtest and cannot fork a live network — remove fork_url",
+                        c.name,
+                        c.kind
+                    );
+                }
+            }
             other => bail!(
-                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet, solana)",
+                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet, solana, bitcoin, litecoin)",
                 c.name
             ),
         }
@@ -333,9 +365,9 @@ mod tests {
     }
 
     #[test]
-    fn default_is_two_anvil_a_starknet_and_a_solana_chain() {
+    fn default_is_two_anvil_a_starknet_a_solana_and_two_utxo_chains() {
         let c = Config::default();
-        assert_eq!(c.chains.len(), 4);
+        assert_eq!(c.chains.len(), 6);
         assert_eq!(c.chains[0].name, "anvil-1");
         assert_eq!(c.chains[0].port, 8545);
         assert_eq!(c.chains[1].chain_id.as_deref(), Some("31338"));
@@ -349,13 +381,22 @@ mod tests {
         assert_eq!(c.chains[3].kind, "solana");
         assert_eq!(c.chains[3].port, 8899);
         assert!(c.chains[3].chain_id.is_none());
+        // The Bitcoin and Litecoin regtest chains are on by default; no chain_id.
+        assert_eq!(c.chains[4].name, "bitcoin-1");
+        assert_eq!(c.chains[4].kind, "bitcoin");
+        assert_eq!(c.chains[4].port, 18443);
+        assert!(c.chains[4].chain_id.is_none());
+        assert_eq!(c.chains[5].name, "litecoin-1");
+        assert_eq!(c.chains[5].kind, "litecoin");
+        assert_eq!(c.chains[5].port, 19443);
+        assert!(c.chains[5].chain_id.is_none());
     }
 
     #[test]
     fn missing_file_yields_defaults() {
         let dir = tempdir().unwrap();
         let c = load_from(&dir.path().join(CONFIG_FILE)).unwrap();
-        assert_eq!(c.chains.len(), 4);
+        assert_eq!(c.chains.len(), 6);
     }
 
     #[test]
@@ -588,6 +629,51 @@ mod tests {
         assert_eq!(c.chains[0].kind, "solana");
         // Solana uses surfpool's local surfnet identity, so none is required.
         assert!(c.chains[0].chain_id.is_none());
+    }
+
+    #[test]
+    fn accepts_bitcoin_and_litecoin_kinds_without_a_chain_id() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "bitcoin-1"
+            kind = "bitcoin"
+            port = 18443
+
+            [[chains]]
+            name = "litecoin-1"
+            kind = "litecoin"
+            port = 19443
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].kind, "bitcoin");
+        assert_eq!(c.chains[1].kind, "litecoin");
+        // regtest has no numeric chain id, so none is required.
+        assert!(c.chains[0].chain_id.is_none());
+        assert!(c.chains[1].chain_id.is_none());
+    }
+
+    #[test]
+    fn utxo_chains_reject_a_fork_url() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "bitcoin-1"
+            kind = "bitcoin"
+            port = 18443
+            fork_url = "https://btc.example/rpc"
+            "#,
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("cannot fork a live network"),
+            "{err}"
+        );
     }
 
     #[test]

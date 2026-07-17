@@ -95,6 +95,24 @@ impl Localnet {
         )
     }
 
+    /// Boot one bitcoind regtest chain named `chain` on host `port`, isolated
+    /// under its own temp dir and compose project. Panics on failure.
+    pub(crate) fn boot_bitcoin(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"bitcoin\"\nport = {port}\n"),
+        )
+    }
+
+    /// Boot one litecoind regtest chain named `chain` on host `port`, isolated
+    /// under its own temp dir and compose project. Panics on failure.
+    pub(crate) fn boot_litecoin(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"litecoin\"\nport = {port}\n"),
+        )
+    }
+
     /// Boot a `surfpool` Solana chain that forks a live Solana RPC at `fork_url`.
     /// Panics on failure.
     pub(crate) fn boot_solana_fork(chain: &str, port: u16, fork_url: &str) -> Localnet {

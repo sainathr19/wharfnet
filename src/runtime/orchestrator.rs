@@ -22,6 +22,7 @@ use super::ui;
 use crate::evm::engine::EvmEngine;
 use crate::solana::engine::SolanaEngine;
 use crate::starknet::engine::StarknetEngine;
+use crate::utxo::engine::{BITCOIN, LITECOIN, UtxoEngine};
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
 pub(crate) const DEFAULT_STATE_DIR: &str = ".wharfnet";
@@ -113,6 +114,11 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
             }
             Box::new(engine)
         }
+        // Bitcoin and Litecoin are the same daemon family (Litecoin is a Bitcoin
+        // fork with an identical RPC), so one engine serves both — only the coin
+        // params differ. Regtest, no fork (config rejects fork_url for them).
+        "bitcoin" => Box::new(UtxoEngine::new(BITCOIN, &c.name, c.port)),
+        "litecoin" => Box::new(UtxoEngine::new(LITECOIN, &c.name, c.port)),
         other => unreachable!("validate() rejects unsupported kind '{other}'"),
     }
 }
@@ -599,6 +605,21 @@ fn probe_ready(port: u16, probe: &HealthProbe) -> bool {
                 None => false,
             }
         }
+        HealthProbe::JsonRpcAuth {
+            method,
+            authorization,
+        } => {
+            let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":[]}}"#);
+            let request = format!(
+                "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: {authorization}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            match http_roundtrip(port, &request) {
+                Some(response) => response.contains("\"result\""),
+                None => false,
+            }
+        }
         HealthProbe::HttpGet { path } => {
             let request =
                 format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
@@ -631,8 +652,9 @@ mod tests {
     use tempfile::tempdir;
 
     /// The default engine set (two Anvil chains, one Starknet chain, one Solana
-    /// chain), with explorers off — the generic checks don't care about the
-    /// `--ui` flag; the tests that do build their own engine set with it enabled.
+    /// chain, and Bitcoin + Litecoin regtest chains), with explorers off — the
+    /// generic checks don't care about the `--ui` flag; the tests that do build
+    /// their own engine set with it enabled.
     fn engines() -> Vec<Box<dyn Engine>> {
         engines_for(&Config::default(), false)
     }
@@ -646,6 +668,8 @@ mod tests {
         assert!(out.contains("anvil-2:"));
         assert!(out.contains("starknet-1:"));
         assert!(out.contains("solana-1:"));
+        assert!(out.contains("bitcoin-1:"));
+        assert!(out.contains("litecoin-1:"));
     }
 
     #[test]
@@ -841,11 +865,13 @@ mod tests {
     #[test]
     fn engines_returns_default_set() {
         let engines = engines();
-        assert_eq!(engines.len(), 4);
+        assert_eq!(engines.len(), 6);
         assert_eq!(engines[0].name(), "anvil-1");
         assert_eq!(engines[1].name(), "anvil-2");
         assert_eq!(engines[2].name(), "starknet-1");
         assert_eq!(engines[3].name(), "solana-1");
+        assert_eq!(engines[4].name(), "bitcoin-1");
+        assert_eq!(engines[5].name(), "litecoin-1");
     }
 
     #[test]
@@ -856,15 +882,22 @@ mod tests {
             .iter()
             .map(|e| e.manifest_entry().chain_id)
             .collect();
-        assert_eq!(ports, vec![8545, 8546, 5050, 8899]);
+        assert_eq!(ports, vec![8545, 8546, 5050, 8899, 18443, 19443]);
         assert_eq!(
             chain_ids,
-            vec!["31337", "31338", "0x534e5f5345504f4c4941", "localnet"]
+            vec![
+                "31337",
+                "31338",
+                "0x534e5f5345504f4c4941",
+                "localnet",
+                "regtest",
+                "regtest"
+            ]
         );
         // No two chains may share a host port or the compose file won't bind.
         assert_eq!(
             ports.iter().collect::<std::collections::HashSet<_>>().len(),
-            4
+            6
         );
     }
 
