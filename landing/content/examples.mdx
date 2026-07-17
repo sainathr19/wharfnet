@@ -142,3 +142,17 @@ fn usdc_is_seeded_on_solana() {
 the same typed handles for every chain. Missing chains/tokens panic with a clear
 message (a setup error in tests), or use the `try_*`/`of_kind` variants to handle
 them yourself.
+
+The **contract ABIs** for the bundled test tokens are embedded too, so you can
+instantiate a token without fetching or hand-writing one — feed the JSON straight
+to viem/ethers/alloy (EVM) or starknet.js/starknet-rust (Starknet):
+
+```rust
+let evm = net.evm();
+let abi_json = evm.token_abi("USDC");   // Some(&str) — the ERC-20 + mint ABI
+// net.starknet().token_abi("REB")      → the rebasing-token Cairo ABI
+// Solana SPL tokens use the standard SPL Token program, so this is None.
+```
+
+The raw ABI constants are also available under `wharfnet::abi`
+(e.g. `wharfnet::abi::evm::TEST_TOKEN`, `wharfnet::abi::starknet::REBASING_TOKEN`).

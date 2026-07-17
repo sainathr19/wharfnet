@@ -31,6 +31,7 @@ mod starknet;
 #[cfg(test)]
 mod harness;
 
+pub mod abi;
 pub mod cli;
 pub mod testkit;
 

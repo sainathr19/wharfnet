@@ -184,6 +184,16 @@ impl<'a> Chain<'a> {
         self.entry.tokens.iter().find(|t| t.symbol == symbol)
     }
 
+    /// The contract ABI (as JSON) for a bundled test token — feed it straight to
+    /// viem/ethers/alloy (EVM) or starknet.js/starknet-rust (Starknet).
+    ///
+    /// `None` when the interface isn't shipped: Solana SPL tokens (use the
+    /// standard SPL Token program) and the Starknet `ETH`/`STRK` fee tokens
+    /// (provided by devnet). See [`crate::abi`] for the raw constants.
+    pub fn token_abi(&self, symbol: &str) -> Option<&'static str> {
+        crate::abi::token_abi(self.kind(), symbol)
+    }
+
     /// The underlying manifest entry, for fields not surfaced by the helpers
     /// above (e.g. canonical `contracts` or a redacted `fork` source).
     pub fn entry(&self) -> &ChainEntry {
