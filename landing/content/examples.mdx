@@ -1,0 +1,108 @@
+---
+title: Examples
+---
+
+import { Tabs, Callout } from 'nextra/components'
+
+# Examples
+
+Two ways to drive a running localnet: **from the CLI** with the bundled recipe
+scripts, or **from application code** with your usual client library pointed at
+the manifest's endpoints. Boot the network first:
+
+```sh
+wharfnet up          # or: wharfnet up --bare
+```
+
+## From the CLI
+
+Task-oriented shell recipes live in [`examples/`](https://github.com/sainathr19/wharfnet/tree/main/examples).
+Each reads endpoints, accounts, and token addresses straight from
+`.wharfnet/wharfnet.json` (via `jq`), so nothing is hard-coded.
+
+| Recipe | What it shows |
+| ------ | ------------- |
+| [evm/fund-and-transfer.sh](https://github.com/sainathr19/wharfnet/blob/main/examples/evm/fund-and-transfer.sh) | Faucet an address, send an ERC-20 transfer, read balances |
+| [evm/snapshot-revert.sh](https://github.com/sainathr19/wharfnet/blob/main/examples/evm/snapshot-revert.sh) | Snapshot state, mutate it, roll back — the test-isolation pattern |
+| [evm/fork-and-impersonate.sh](https://github.com/sainathr19/wharfnet/blob/main/examples/evm/fork-and-impersonate.sh) | Fork mainnet, impersonate a whale, move real USDC with no key |
+| [solana/airdrop-and-tokens.sh](https://github.com/sainathr19/wharfnet/blob/main/examples/solana/airdrop-and-tokens.sh) | Airdrop SOL, top up SPL tokens, read balances over JSON-RPC |
+| [starknet/fund-and-read.sh](https://github.com/sainathr19/wharfnet/blob/main/examples/starknet/fund-and-read.sh) | Fund the Cairo test tokens, read an ERC-20 balance |
+| [ci/github-actions.yml](https://github.com/sainathr19/wharfnet/blob/main/examples/ci/github-actions.yml) | Boot the localnet in CI, run tests, tear down |
+
+## From application code
+
+Point your usual client at the endpoints from `wharfnet status` (or read them
+from `.wharfnet/wharfnet.json`). The chains behave like the real thing, so no
+wharfnet-specific SDK is needed.
+
+<Tabs items={['EVM — viem', 'Solana — web3.js', 'Starknet — starknet.js']}>
+<Tabs.Tab>
+
+```ts
+import { createPublicClient, http } from 'viem'
+import { anvil } from 'viem/chains'
+
+// anvil-1's RPC, from `wharfnet status`
+const client = createPublicClient({ chain: anvil, transport: http('http://127.0.0.1:8545') })
+
+// USDC is pre-deployed at a fixed address on every EVM chain
+const USDC = '0x5FbDB2315678afecb367f032d93F642f64180aa3'
+const abi = [{
+  name: 'balanceOf', type: 'function', stateMutability: 'view',
+  inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }],
+}] as const
+
+const balance = await client.readContract({
+  address: USDC, abi, functionName: 'balanceOf',
+  args: ['0x70997970C51812dc3A010C7d01b50e0d17dc79C8'],
+})
+console.log('USDC balance (base units):', balance)
+```
+
+The dev accounts use Anvil's standard test mnemonic, so their private keys are
+well-known — sign with them via `createWalletClient` for writes.
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+```ts
+import { Connection, PublicKey } from '@solana/web3.js'
+
+// web3.js derives the WebSocket URL (port + 1) from the RPC URL automatically,
+// so subscriptions and confirmTransaction just work.
+const connection = new Connection('http://127.0.0.1:8899', 'confirmed')
+
+// a funded dev account from `wharfnet status`
+const wallet = new PublicKey('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM')
+console.log('SOL balance (lamports):', await connection.getBalance(wallet))
+
+// live subscription over the WebSocket endpoint (ws://127.0.0.1:8900)
+connection.onSlotChange(({ slot }) => console.log('slot', slot))
+```
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+```ts
+import { RpcProvider, Contract } from 'starknet'
+
+// starknet-1's RPC is served under /rpc
+const provider = new RpcProvider({ nodeUrl: 'http://127.0.0.1:5050/rpc' })
+
+// USDC is a pre-deployed Cairo test token; balance_of returns a u256
+const USDC = '0x040b582f9ba878be8e78a6ddc665dfdfd55a4deae9ceeb40115abcfa1f8df686'
+const { abi } = await provider.getClassAt(USDC)
+const usdc = new Contract(abi, USDC, provider)
+
+const balance = await usdc.balance_of('0x064b48806902a367c8598f4f95c305e8c1a1acba5f082d294a43793113115691')
+console.log('USDC balance (base units):', balance)
+```
+
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+  Need funded accounts or tokens at a specific address first? Use the
+  [faucet](/getting-started) — `wharfnet faucet <chain> <address> <amount>` tops
+  up the native coin and every test token, with no private key.
+</Callout>

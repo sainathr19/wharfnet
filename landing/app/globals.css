@@ -50,6 +50,64 @@
   opacity: 0.75;
 }
 
+/* ── Landing terminal demo ──────────────────────────────────────────── */
+
+.term {
+  margin: 2rem 0 2.5rem;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  background: #0c0d10;
+  box-shadow: 0 12px 40px -12px rgba(0, 0, 0, 0.5);
+}
+
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem;
+  background: #16181d;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.term-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 9999px;
+  display: inline-block;
+}
+
+.term-title {
+  margin-left: 0.5rem;
+  font-size: 0.78rem;
+  color: #8b909a;
+}
+
+.term-body {
+  margin: 0;
+  padding: 1.1rem 1.25rem;
+  background: #0c0d10 !important;
+  color: #e6e8ec;
+  font-size: 0.83rem;
+  line-height: 1.7;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.term-body .t-dim {
+  color: #6b7280;
+}
+.term-body .t-ok {
+  color: #27c93f;
+}
+.term-body .t-url {
+  color: #58a6ff;
+}
+.term-body .t-accent {
+  color: #2f81f7;
+}
+
 /* ── Changelog timeline ─────────────────────────────────────────────── */
 
 .cl-filters {

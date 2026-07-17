@@ -6,12 +6,28 @@ import 'nextra-theme-docs/style.css'
 import './globals.css'
 
 export const metadata = {
+  // Origin used to resolve the generated OG image to an absolute URL (basePath
+  // is appended automatically). Update this if a custom domain is configured.
+  metadataBase: new URL('https://sainathr19.github.io'),
   title: {
     default: 'Wharfnet',
     template: '%s | Wharfnet'
   },
   description:
-    'One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.'
+    'One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.',
+  openGraph: {
+    title: 'Wharfnet',
+    description:
+      'One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.',
+    url: '/wharfnet',
+    siteName: 'Wharfnet',
+    type: 'website'
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Wharfnet',
+    description: 'One-command localnet for EVM, Solana & Starknet.'
+  }
 }
 
 const navbar = (
