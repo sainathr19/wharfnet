@@ -565,9 +565,9 @@ mod tests {
     // that every baked dev account is funded by the boot airdrop. Self-skips
     // without Docker.
 
+    use crate::harness::{Localnet, docker_available};
     use crate::runtime::manifest::Manifest;
     use crate::runtime::orchestrator::manifest_path;
-    use crate::testkit::{Localnet, docker_available};
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Duration;

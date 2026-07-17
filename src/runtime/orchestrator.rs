@@ -1007,11 +1007,11 @@ mod tests {
     /// all services. Self-skips without Docker.
     #[test]
     fn logs_in_streams_a_running_chain() {
-        if !crate::testkit::docker_available() {
+        if !crate::harness::docker_available() {
             eprintln!("skipping logs test: docker unavailable");
             return;
         }
-        let net = crate::testkit::Localnet::boot("t-logs", 18547, 313390, 3600);
+        let net = crate::harness::Localnet::boot("t-logs", 18547, 313390, 3600);
         logs_in(net.base(), net.project(), Some(net.chain()), false).unwrap();
         logs_in(net.base(), net.project(), None, false).unwrap();
     }

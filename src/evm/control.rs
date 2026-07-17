@@ -260,7 +260,7 @@ mod tests {
     // RPC against a real chain and assert the observable effect (blocks mined,
     // clock advanced, state rolled back). Self-skips without Docker.
 
-    use crate::testkit::{Localnet, docker_available};
+    use crate::harness::{Localnet, docker_available};
 
     /// Leading integer from `cast` output, accepting decimal or `0x` hex.
     fn parse_u64(out: &str) -> u64 {

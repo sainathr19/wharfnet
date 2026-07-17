@@ -333,9 +333,9 @@ mod tests {
     // signed-invoke path works against the RPC-0.10 devnet. Self-skips without
     // Docker.
 
+    use crate::harness::{Localnet, docker_available};
     use crate::runtime::manifest::Manifest;
     use crate::runtime::orchestrator::manifest_path;
-    use crate::testkit::{Localnet, docker_available};
     use starknet_rust::core::types::FunctionCall;
 
     /// A dedicated port, away from the other e2e ports, for parallel runs.

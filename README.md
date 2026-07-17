@@ -29,6 +29,9 @@ opinionated, reproducible tool:
   opt-in persistence when you want to pick up where you left off.
 - **Uniform surface across VMs.** The same verbs (`up`, `faucet`, per-chain
   control) work the same way whether the chain is EVM, Starknet, or Solana.
+- **A test-utils library, not just a CLI.** Import `wharfnet::testkit` to read a
+  running localnet's endpoints, funded accounts, and token addresses (plus
+  embedded ABIs) straight into your Rust tests — no hard-coding.
 
 ## Documentation
 
@@ -102,6 +105,34 @@ wharfnet down
 
 Faucet, chain-control, forking, and explorer details live in the per-chain
 guides linked [above](#documentation).
+
+## Use it in tests (Rust)
+
+wharfnet is also a **library**. Add it as a `dev-dependency` and connect to a
+running localnet from an integration test — no hard-coded URLs or token
+addresses, all read from the manifest `wharfnet up` writes:
+
+```toml
+# Cargo.toml
+[dev-dependencies]
+wharfnet = "0.1"
+```
+
+```rust
+use wharfnet::testkit::Localnet;
+
+let net = Localnet::connect()?;      // reads .wharfnet/wharfnet.json
+let sol = net.solana();              // also .evm() / .starknet() / .chain("anvil-2")
+let rpc = sol.rpc_url();             // + .ws_url(), .chain_id(), .explorer()
+let usdc = sol.token("USDC");        // { address, decimals, .. }
+let dev0 = sol.account(0);           // funded signer: address + private_key
+let abi = sol.token_abi("USDC");     // embedded contract ABI (EVM/Starknet)
+```
+
+The bundled test tokens' contract ABIs are embedded too (`wharfnet::abi`), so you
+can instantiate a token without fetching or hand-writing one. See the
+[Examples guide](https://sainathr19.github.io/wharfnet/examples) for viem /
+web3.js / starknet.js snippets alongside the Rust API.
 
 ## Configuration
 
