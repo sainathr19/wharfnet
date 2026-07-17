@@ -1,169 +1,260 @@
-//! Test-only helpers for the docker-backed end-to-end tests.
+//! Test utilities for driving a running wharfnet localnet from integration
+//! tests.
 //!
-//! [`Localnet::boot`] brings up a *real* single-chain Anvil localnet in an
-//! isolated temp dir and compose project, so several e2e tests can run in
-//! parallel without clashing on host ports, container names, or the shared
-//! `.wharfnet` state dir. Every test that uses one first checks
-//! [`docker_available`] and self-skips when Docker is absent (or when
-//! `WHARFNET_SKIP_DOCKER_TESTS` is set, as CI does).
+//! [`Localnet::connect`] reads the endpoints manifest that `wharfnet up` writes
+//! to `.wharfnet/wharfnet.json`, giving typed access to each chain's RPC/WS
+//! URLs, funded dev accounts (with keys), and pre-deployed token addresses — so
+//! tests never hard-code any of them.
+//!
+//! ```no_run
+//! use wharfnet::testkit::Localnet;
+//!
+//! # fn main() -> anyhow::Result<()> {
+//! let net = Localnet::connect()?;
+//! let sol = net.solana();
+//! let client_url = sol.rpc_url();       // point your Solana client here
+//! let usdc = sol.token("USDC");         // { address, decimals, .. }
+//! let signer = sol.account(0);          // funded dev account + private key
+//! # let _ = (client_url, usdc, signer);
+//! # Ok(())
+//! # }
+//! ```
 
-use std::fs;
 use std::path::Path;
-use std::process::Command;
 
-use crate::runtime::orchestrator::{self, UpMode};
+use anyhow::{Context, Result};
 
-/// Whether the docker-backed e2e tests should run. Honors the CI opt-out so the
-/// heavy container tests don't run on machines (or pipelines) without Docker.
-pub(crate) fn docker_available() -> bool {
-    if std::env::var_os("WHARFNET_SKIP_DOCKER_TESTS").is_some() {
-        return false;
-    }
-    Command::new("docker")
-        .args(["compose", "version"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
+use crate::runtime::manifest::{Account, ChainEntry, Manifest, Token};
+use crate::runtime::orchestrator::{DEFAULT_STATE_DIR, manifest_path};
 
-/// A real single-chain localnet booted in an isolated temp dir + compose
-/// project, torn down automatically when dropped. Construct it behind a
-/// [`docker_available`] check.
-pub(crate) struct Localnet {
-    // The temp dir is created under the crate root (`.`), not the system temp
-    // dir, so its bind-mounted `state/` sits under a path Docker Desktop shares
-    // by default on macOS. Dropped after `Drop` runs, so teardown still sees it.
-    dir: tempfile::TempDir,
-    project: String,
-    chain: String,
+/// A handle to a running localnet, read from the manifest `wharfnet up` writes.
+///
+/// Construct one with [`Localnet::connect`] (current directory) or
+/// [`Localnet::connect_from`] (an explicit `.wharfnet` directory).
+#[derive(Debug)]
+pub struct Localnet {
+    manifest: Manifest,
 }
 
 impl Localnet {
-    /// Boot one Anvil chain named `chain` on host `port` / `chain_id`, isolated
-    /// under its own temp dir and compose project. `block_time` is the
-    /// auto-mining interval — pass a large value to effectively freeze
-    /// auto-mining so block-count assertions stay deterministic. Panics on
-    /// failure (this is test-only code).
-    pub(crate) fn boot(chain: &str, port: u16, chain_id: u64, block_time: u64) -> Localnet {
-        // A single-chain topology on a dedicated high port keeps parallel e2e
-        // tests from colliding with each other or a dev localnet on 8545/8546.
-        Self::boot_with_config(
-            chain,
-            &format!(
-                "[[chains]]\nname = \"{chain}\"\nport = {port}\nchain_id = {chain_id}\nblock_time = {block_time}\n"
-            ),
-        )
+    /// Connect to the localnet started by `wharfnet up` in the current working
+    /// directory. Returns a clear error if no manifest is found (i.e. nothing
+    /// is running).
+    pub fn connect() -> Result<Self> {
+        Self::connect_from(Path::new(DEFAULT_STATE_DIR))
     }
 
-    /// Boot one `starknet-devnet` chain named `chain` on host `port`, isolated
-    /// under its own temp dir and compose project. Panics on failure.
-    pub(crate) fn boot_starknet(chain: &str, port: u16) -> Localnet {
-        Self::boot_with_config(
-            chain,
-            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\n"),
-        )
+    /// Connect using a specific `.wharfnet` state directory — useful when the
+    /// test process runs from a different working directory than `wharfnet up`.
+    pub fn connect_from(state_dir: &Path) -> Result<Self> {
+        let path = manifest_path(state_dir);
+        let manifest = Manifest::read(&path).with_context(|| {
+            format!(
+                "no running localnet at {} — start one with `wharfnet up`",
+                path.display()
+            )
+        })?;
+        Ok(Self { manifest })
     }
 
-    /// Like [`boot_starknet`](Self::boot_starknet) but with the explorer on, so
-    /// devnet serves its embedded web UI. Cheap to enable — it's a `--ui` flag on
-    /// the same devnet image, not a separate explorer container to pull.
-    pub(crate) fn boot_starknet_ui(chain: &str, port: u16) -> Localnet {
-        Self::boot_with_config_explorer(
-            chain,
-            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\n"),
-            true,
-        )
+    /// Every chain in the manifest.
+    pub fn chains(&self) -> impl Iterator<Item = Chain<'_>> {
+        self.manifest.chains.iter().map(Chain::new)
     }
 
-    /// Boot one `surfpool` Solana chain named `chain` on host `port`, isolated
-    /// under its own temp dir and compose project. Panics on failure.
-    pub(crate) fn boot_solana(chain: &str, port: u16) -> Localnet {
-        Self::boot_with_config(
-            chain,
-            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"solana\"\nport = {port}\n"),
-        )
+    /// A chain by exact name (e.g. `"anvil-1"`, `"solana-1"`).
+    pub fn chain(&self, name: &str) -> Result<Chain<'_>> {
+        self.manifest
+            .chains
+            .iter()
+            .find(|c| c.name == name)
+            .map(Chain::new)
+            .with_context(|| format!("no chain named '{name}' in the running localnet"))
     }
 
-    /// Like [`boot_solana`](Self::boot_solana) but with the explorer on, so
-    /// surfpool serves its Studio UI on a second published host port. Cheap to
-    /// enable — it's a flag on the same surfpool image, no extra container.
-    pub(crate) fn boot_solana_ui(chain: &str, port: u16) -> Localnet {
-        Self::boot_with_config_explorer(
-            chain,
-            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"solana\"\nport = {port}\n"),
-            true,
-        )
+    /// The first chain of a kind (`"evm"`, `"solana"`, `"starknet"`), or an
+    /// error if none is running.
+    pub fn of_kind(&self, kind: &str) -> Result<Chain<'_>> {
+        self.manifest
+            .chains
+            .iter()
+            .find(|c| c.kind == kind)
+            .map(Chain::new)
+            .with_context(|| format!("no {kind} chain in the running localnet"))
     }
 
-    /// Boot a `surfpool` Solana chain that forks a live Solana RPC at `fork_url`.
-    /// Panics on failure.
-    pub(crate) fn boot_solana_fork(chain: &str, port: u16, fork_url: &str) -> Localnet {
-        Self::boot_with_config(
-            chain,
-            &format!(
-                "[[chains]]\nname = \"{chain}\"\nkind = \"solana\"\nport = {port}\nfork_url = \"{fork_url}\"\n"
-            ),
-        )
+    /// The first EVM chain. Panics if none is running — convenient in tests
+    /// where a missing chain is a setup error, not a case to handle.
+    pub fn evm(&self) -> Chain<'_> {
+        self.expect_kind("evm")
     }
 
-    /// Boot a `starknet-devnet` chain that forks a live Starknet RPC at
-    /// `fork_url`. Panics on failure.
-    pub(crate) fn boot_starknet_fork(chain: &str, port: u16, fork_url: &str) -> Localnet {
-        Self::boot_with_config(
-            chain,
-            &format!(
-                "[[chains]]\nname = \"{chain}\"\nkind = \"starknet\"\nport = {port}\nfork_url = \"{fork_url}\"\n"
-            ),
-        )
+    /// The first Solana chain. Panics if none is running.
+    pub fn solana(&self) -> Chain<'_> {
+        self.expect_kind("solana")
     }
 
-    /// Write `config_body` as the single-chain `wharfnet.toml` and boot it fresh,
-    /// with no explorer, in an isolated temp dir + compose project.
-    fn boot_with_config(chain: &str, config_body: &str) -> Localnet {
-        Self::boot_with_config_explorer(chain, config_body, false)
+    /// The first Starknet chain. Panics if none is running.
+    pub fn starknet(&self) -> Chain<'_> {
+        self.expect_kind("starknet")
     }
 
-    /// As [`boot_with_config`](Self::boot_with_config), but `explorer` selects
-    /// whether the bundled explorer is booted. EVM chains skip it to avoid the
-    /// Otterscan image pull; Starknet's is in-process, so it's cheap to enable.
-    fn boot_with_config_explorer(chain: &str, config_body: &str, explorer: bool) -> Localnet {
-        let dir = tempfile::TempDir::new_in(".").expect("create temp dir under crate root");
-        let config = dir.path().join("wharfnet.toml");
-        fs::write(&config, config_body).expect("write test config");
-
-        let net = Localnet {
-            dir,
-            project: format!("wharfnet-e2e-{chain}"),
-            chain: chain.to_string(),
-        };
-        // Construct `net` first so a boot failure still tears down via `Drop`.
-        orchestrator::up_in(
-            net.base(),
-            &net.project,
-            UpMode::Fresh,
-            explorer,
-            Some(&config),
-        )
-        .expect("localnet should boot");
-        net
-    }
-
-    pub(crate) fn base(&self) -> &Path {
-        self.dir.path()
-    }
-
-    pub(crate) fn project(&self) -> &str {
-        &self.project
-    }
-
-    pub(crate) fn chain(&self) -> &str {
-        &self.chain
+    fn expect_kind(&self, kind: &str) -> Chain<'_> {
+        self.of_kind(kind).unwrap_or_else(|e| panic!("{e}"))
     }
 }
 
-impl Drop for Localnet {
-    fn drop(&mut self) {
-        // Best-effort teardown; a leaked container would clash with a re-run.
-        let _ = orchestrator::down_in(self.base(), &self.project);
+/// A single chain's endpoints, funded accounts, and pre-deployed tokens.
+///
+/// A lightweight borrowed view over one manifest entry — cheap to copy.
+#[derive(Clone, Copy)]
+pub struct Chain<'a> {
+    entry: &'a ChainEntry,
+}
+
+impl<'a> Chain<'a> {
+    fn new(entry: &'a ChainEntry) -> Self {
+        Self { entry }
+    }
+
+    /// The chain's name (e.g. `"anvil-1"`).
+    pub fn name(&self) -> &str {
+        &self.entry.name
+    }
+
+    /// The chain kind (`"evm"`, `"solana"`, `"starknet"`).
+    pub fn kind(&self) -> &str {
+        &self.entry.kind
+    }
+
+    /// The HTTP JSON-RPC URL — point your client (viem, solana-client,
+    /// starknet.js, …) here.
+    pub fn rpc_url(&self) -> &str {
+        &self.entry.rpc
+    }
+
+    /// The WebSocket RPC URL, when the chain serves one on a port distinct from
+    /// its HTTP RPC (Solana). EVM/Starknet share the HTTP port, so this is
+    /// `None`.
+    pub fn ws_url(&self) -> Option<&str> {
+        self.entry.ws.as_deref()
+    }
+
+    /// The chain id as a string — decimal for EVM (`"31337"`), a felt for
+    /// Starknet, or `"localnet"` for Solana.
+    pub fn chain_id(&self) -> &str {
+        &self.entry.chain_id
+    }
+
+    /// The bundled block explorer URL, when one was booted (skipped by
+    /// `wharfnet up --bare`).
+    pub fn explorer(&self) -> Option<&str> {
+        self.entry.explorer.as_deref()
+    }
+
+    /// The funded dev accounts (address, private key, and starting balance).
+    pub fn accounts(&self) -> &[Account] {
+        &self.entry.accounts
+    }
+
+    /// The i-th funded dev account. Panics if out of range.
+    pub fn account(&self, i: usize) -> &Account {
+        self.entry.accounts.get(i).unwrap_or_else(|| {
+            panic!(
+                "chain '{}' has {} dev accounts; no account #{i}",
+                self.entry.name,
+                self.entry.accounts.len()
+            )
+        })
+    }
+
+    /// The pre-deployed test tokens at their fixed addresses.
+    pub fn tokens(&self) -> &[Token] {
+        &self.entry.tokens
+    }
+
+    /// A token by symbol (e.g. `"USDC"`). Panics if this chain doesn't have it.
+    pub fn token(&self, symbol: &str) -> &Token {
+        self.try_token(symbol)
+            .unwrap_or_else(|| panic!("chain '{}' has no token '{symbol}'", self.entry.name))
+    }
+
+    /// A token by symbol, or `None` if this chain doesn't have it.
+    pub fn try_token(&self, symbol: &str) -> Option<&Token> {
+        self.entry.tokens.iter().find(|t| t.symbol == symbol)
+    }
+
+    /// The underlying manifest entry, for fields not surfaced by the helpers
+    /// above (e.g. canonical `contracts` or a redacted `fork` source).
+    pub fn entry(&self) -> &ChainEntry {
+        self.entry
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn write_sample(dir: &Path) {
+        let m = Manifest::new(vec![ChainEntry {
+            name: "solana-1".into(),
+            kind: "solana".into(),
+            rpc: "http://127.0.0.1:8899".into(),
+            ws: Some("ws://127.0.0.1:8900".into()),
+            chain_id: "localnet".into(),
+            accounts: vec![Account {
+                address: "Dev0".into(),
+                private_key: "sk0".into(),
+                balance: "10000 SOL".into(),
+            }],
+            tokens: vec![Token {
+                symbol: "USDC".into(),
+                name: "USD Coin".into(),
+                address: "Mint1111".into(),
+                decimals: 6,
+            }],
+            contracts: vec![],
+            fork: None,
+            explorer: Some("http://127.0.0.1:18899".into()),
+        }]);
+        m.write(&manifest_path(dir)).unwrap();
+    }
+
+    #[test]
+    fn connect_reads_endpoints_accounts_and_tokens() {
+        let dir = tempdir().unwrap();
+        write_sample(dir.path());
+
+        let net = Localnet::connect_from(dir.path()).unwrap();
+        let sol = net.solana();
+        assert_eq!(sol.name(), "solana-1");
+        assert_eq!(sol.rpc_url(), "http://127.0.0.1:8899");
+        assert_eq!(sol.ws_url(), Some("ws://127.0.0.1:8900"));
+        assert_eq!(sol.chain_id(), "localnet");
+        assert_eq!(sol.explorer(), Some("http://127.0.0.1:18899"));
+        assert_eq!(sol.account(0).address, "Dev0");
+        assert_eq!(sol.account(0).private_key, "sk0");
+        assert_eq!(sol.token("USDC").decimals, 6);
+        assert!(sol.try_token("WBTC").is_none());
+    }
+
+    #[test]
+    fn connect_without_a_manifest_errors_with_a_hint() {
+        let dir = tempdir().unwrap();
+        let err = Localnet::connect_from(dir.path()).unwrap_err();
+        assert!(err.to_string().contains("wharfnet up"), "{err}");
+    }
+
+    #[test]
+    fn selecting_a_missing_chain_or_kind_reports_clearly() {
+        let dir = tempdir().unwrap();
+        write_sample(dir.path());
+        let net = Localnet::connect_from(dir.path()).unwrap();
+
+        assert!(net.of_kind("evm").is_err());
+        assert!(net.chain("anvil-1").is_err());
+        assert_eq!(net.chain("solana-1").unwrap().kind(), "solana");
+        assert_eq!(net.chains().count(), 1);
     }
 }

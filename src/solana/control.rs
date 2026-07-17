@@ -250,7 +250,7 @@ mod tests {
     // (slots advanced, clock moved/warped, production frozen then resumed) plus
     // the forward-only guard on warp. Self-skips without Docker.
 
-    use crate::testkit::{Localnet, docker_available};
+    use crate::harness::{Localnet, docker_available};
     use std::thread::sleep;
     use std::time::Duration;
 

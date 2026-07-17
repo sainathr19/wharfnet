@@ -12,6 +12,14 @@ under _Unreleased_ and the CLI surface may still change.
 
 ### Added
 
+- **`wharfnet::testkit` — a Rust test-utils API** — the crate is now a library as
+  well as a CLI. Add `wharfnet` as a `dev-dependency` and, from an integration
+  test, `Localnet::connect()` reads the manifest a running `wharfnet up` wrote and
+  hands back typed accessors: `net.solana().rpc_url()`, `.ws_url()`,
+  `.token("USDC")`, `.account(0)` (address + private key), `.explorer()`, etc. —
+  so tests never hard-code RPC URLs or token addresses. Reuses the existing
+  manifest model; the binary is now a thin shim over the library. The CLI moved
+  into a `cli` module and the internal e2e harness was renamed to `harness`.
 - **Solana WebSocket RPC** — surfpool's WebSocket endpoint is now published, so
   subscriptions (`slotSubscribe`, `logsSubscribe`) and `confirmTransaction` work
   from the host (previously only the HTTP RPC on 8899 was mapped). It's published

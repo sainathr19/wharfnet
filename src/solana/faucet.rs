@@ -281,9 +281,9 @@ mod tests {
     // getTokenAccountsByOwner. Exercises the default fund, a single-token top-up,
     // and a second full fund to prove funding is additive. Self-skips w/o Docker.
 
+    use crate::harness::{Localnet, docker_available};
     use crate::runtime::manifest::Manifest;
     use crate::runtime::orchestrator::manifest_path;
-    use crate::testkit::{Localnet, docker_available};
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Duration;

@@ -11,6 +11,10 @@ readme = "README.md"
 keywords = ["localnet", "devnet", "blockchain", "testing", "web3"]
 categories = ["development-tools", "command-line-utilities"]
 
+[lib]
+name = "wharfnet"
+path = "src/lib.rs"
+
 [[bin]]
 name = "wharfnet"
 path = "src/main.rs"
