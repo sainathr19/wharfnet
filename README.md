@@ -46,6 +46,9 @@ The site is a [Nextra](https://nextra.site) app under [`landing/`](landing/),
 deployed to GitHub Pages on every push to `main` (source pages live in
 [`landing/content/`](landing/content/)).
 
+Runnable task recipes — fund + transfer, snapshot/revert, fork & impersonate,
+Solana airdrops, and a CI workflow — live in [`examples/`](examples/).
+
 ## Prerequisites
 
 wharfnet runs each chain as a container, so it needs **Docker with the Compose

@@ -1,0 +1,44 @@
+# Example: boot a wharfnet localnet in CI, run your integration tests against
+# it, and tear it down. Drop this into .github/workflows/ in your own project
+# (not this repo) and adapt the "Run integration tests" step.
+#
+# GitHub-hosted Ubuntu runners already have Docker, so no extra services block
+# is needed — wharfnet drives docker compose itself.
+name: Integration tests
+
+on: [push, pull_request]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install the wharfnet CLI. Pin a version for reproducible CI.
+      - name: Install wharfnet
+        run: cargo install wharfnet --locked
+
+      # Boot the chains only (skip the block explorers in CI). `up` blocks until
+      # every chain reports healthy, so the next step can connect immediately.
+      - name: Start localnet
+        run: wharfnet up --bare
+
+      # The endpoints, accounts, and token addresses your tests need are in
+      # .wharfnet/wharfnet.json — read them there instead of hard-coding.
+      - name: Show endpoints
+        run: wharfnet status
+
+      # Replace this with your test command. Point your client at the manifest's
+      # rpc/ws URLs (e.g. RPC_URL below is anvil-1's endpoint).
+      - name: Run integration tests
+        run: |
+          RPC_URL=$(jq -r '.chains[] | select(.name=="anvil-1") | .rpc' .wharfnet/wharfnet.json)
+          echo "Testing against $RPC_URL"
+          # e.g. forge test --fork-url "$RPC_URL"
+          #      npm test         (with RPC_URL in the env)
+          #      cargo test
+
+      # Always tear down, even if the tests failed, so runners don't leak state.
+      - name: Stop localnet
+        if: always()
+        run: wharfnet down
