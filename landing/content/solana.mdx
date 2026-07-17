@@ -19,6 +19,13 @@ curl -s -X POST http://127.0.0.1:8899 \
   -d '{"jsonrpc":"2.0","id":1,"method":"getHealth","params":[]}'   # -> {"result":"ok"}
 ```
 
+<Callout type="info">
+  Writing Rust tests? Read the endpoints and accounts from a running localnet
+  with [`wharfnet::testkit`](/examples): `net.solana().rpc_url()`, `.ws_url()`,
+  `.token("USDC")`, and `.account(0)`. (Solana SPL tokens use the standard SPL
+  Token program, so `token_abi` is `None` — use `@solana/spl-token`.)
+</Callout>
+
 Each Solana chain comes with **deterministic funded dev accounts** — three
 keypairs derived from documented seeds (`sha256("wharfnet-solana-dev-<i>")` →
 ed25519), so they're identical on every boot and regenerable by anyone (the
