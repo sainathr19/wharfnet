@@ -635,4 +635,20 @@ mod tests {
         run(Commands::Status).expect("status should succeed");
         run(Commands::Down).expect("down should succeed");
     }
+
+    /// `compose` renders from config + templates only — no manifest, no Docker —
+    /// so it exercises that dispatch arm and the renderer deterministically.
+    #[test]
+    fn run_compose_renders_without_docker() {
+        run(Commands::Compose {
+            bare: true,
+            config: None,
+        })
+        .expect("compose --bare renders");
+        run(Commands::Compose {
+            bare: false,
+            config: None,
+        })
+        .expect("compose with explorers renders");
+    }
 }
