@@ -71,14 +71,42 @@ mod tests {
     }
 
     #[test]
-    fn maps_known_tokens_and_declines_the_rest() {
-        assert!(token_abi("evm", "USDC").is_some());
-        assert!(token_abi("evm", "NRT").is_some());
-        assert!(token_abi("starknet", "REB").is_some());
-        // Standard / not-shipped interfaces.
+    fn maps_every_evm_token_to_its_shape() {
+        assert_eq!(token_abi("evm", "USDC"), Some(evm::TEST_TOKEN));
+        assert_eq!(token_abi("evm", "WBTC"), Some(evm::TEST_TOKEN));
+        assert_eq!(token_abi("evm", "FEE"), Some(evm::FEE_TOKEN));
+        assert_eq!(token_abi("evm", "REB"), Some(evm::REBASING_TOKEN));
+        assert_eq!(token_abi("evm", "NRT"), Some(evm::NO_RETURN_TOKEN));
+    }
+
+    #[test]
+    fn maps_every_starknet_token_to_its_shape() {
+        assert_eq!(token_abi("starknet", "USDC"), Some(starknet::TEST_TOKEN));
+        assert_eq!(token_abi("starknet", "WBTC"), Some(starknet::TEST_TOKEN));
+        assert_eq!(token_abi("starknet", "FEE"), Some(starknet::FEE_TOKEN));
+        assert_eq!(token_abi("starknet", "REB"), Some(starknet::REBASING_TOKEN));
+    }
+
+    #[test]
+    fn declines_standard_and_unknown_interfaces() {
+        // Solana SPL — standard program, nothing shipped.
         assert!(token_abi("solana", "USDC").is_none());
+        assert!(token_abi("solana", "WBTC").is_none());
+        // Starknet fee tokens are provided by devnet, not wharfnet.
         assert!(token_abi("starknet", "ETH").is_none());
+        assert!(token_abi("starknet", "STRK").is_none());
+        // Unknown kind / symbol.
         assert!(token_abi("evm", "NOPE").is_none());
+        assert!(token_abi("aptos", "USDC").is_none());
+    }
+
+    #[test]
+    fn rebasing_and_no_return_abis_reflect_their_quirks() {
+        // The rebasing token exposes `rebase`; the no-return token's `transfer`
+        // has no boolean output.
+        assert!(evm::REBASING_TOKEN.contains("rebase"));
+        assert!(starknet::REBASING_TOKEN.contains("rebase"));
+        assert!(evm::NO_RETURN_TOKEN.contains("transfer"));
     }
 
     #[test]
