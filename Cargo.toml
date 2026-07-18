@@ -1,6 +1,6 @@
 [package]
 name = "wharfnet"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 description = "One-command localnet for EVM, Solana & Starknet — a CLI plus a Rust test-utils library, with a built-in faucet and pre-deployed test tokens"
 authors = ["Sainath <Sainath@hashiraworks.com>"]
