@@ -106,3 +106,53 @@ console.log('USDC balance (base units):', balance)
   [faucet](/getting-started) — `wharfnet faucet <chain> <address> <amount>` tops
   up the native coin and every test token, with no private key.
 </Callout>
+
+## In Rust tests — `wharfnet::testkit`
+
+wharfnet is also a **library**. Add it as a `dev-dependency` and connect to a
+running localnet from an integration test — no hard-coded URLs or token
+addresses, all read from the manifest `wharfnet up` writes:
+
+```toml filename="Cargo.toml"
+[dev-dependencies]
+wharfnet = "0.1"
+```
+
+```rust filename="tests/localnet.rs"
+use wharfnet::testkit::Localnet;
+
+#[test]
+fn usdc_is_seeded_on_solana() {
+    // Reads .wharfnet/wharfnet.json (run `wharfnet up` first, or in a CI step).
+    let net = Localnet::connect().unwrap();
+
+    let sol = net.solana();
+    let rpc = sol.rpc_url();          // e.g. http://127.0.0.1:8899
+    let ws = sol.ws_url();            // Some("ws://127.0.0.1:8900")
+    let usdc = sol.token("USDC");     // mint address + decimals
+    let dev0 = sol.account(0);        // funded dev account: address + private key
+
+    assert_eq!(usdc.decimals, 6);
+    // ... point solana-client / a signer built from dev0.private_key at `rpc`.
+    let _ = (rpc, ws);
+}
+```
+
+`net.evm()`, `net.starknet()`, `net.chain("anvil-2")`, and `net.chains()` give
+the same typed handles for every chain. Missing chains/tokens panic with a clear
+message (a setup error in tests), or use the `try_*`/`of_kind` variants to handle
+them yourself.
+
+The **contract ABIs** for the bundled test tokens are embedded too, so you can
+instantiate a token without fetching or hand-writing one — feed the JSON straight
+to viem/ethers/alloy (EVM) or starknet.js/starknet-rust (Starknet):
+
+```rust
+let evm = net.evm();
+let abi_json = evm.token_abi("USDC");   // Some(&str) — the ERC-20 + mint ABI
+// net.starknet().token_abi("REB")      → the rebasing-token Cairo ABI
+// Solana SPL tokens use the standard SPL Token program, so this is None.
+```
+
+The raw ABI constants are also available under `wharfnet::abi`
+(e.g. `wharfnet::abi::evm::TEST_TOKEN`, `wharfnet::abi::starknet::REBASING_TOKEN`).

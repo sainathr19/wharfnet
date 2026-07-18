@@ -252,7 +252,7 @@ mod tests {
     // clock advanced/warped) plus the forking-mode guard on impersonate.
     // Self-skips without Docker.
 
-    use crate::testkit::{Localnet, docker_available};
+    use crate::harness::{Localnet, docker_available};
 
     /// A dedicated high port, away from the other Starknet e2e ports.
     const SN_CONTROL_PORT: u16 = 5157;

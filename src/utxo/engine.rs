@@ -233,7 +233,7 @@ mod tests {
 
     use crate::runtime::manifest::Manifest;
     use crate::runtime::orchestrator::manifest_path;
-    use crate::testkit::{Localnet, docker_available};
+    use crate::harness::{Localnet, docker_available};
 
     /// Query the recipient wallet's confirmed balance (coins) via the node RPC,
     /// using the dev credentials embedded in the chain's rpc url.

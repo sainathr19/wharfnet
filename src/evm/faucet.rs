@@ -218,7 +218,7 @@ mod tests {
     // on-chain `mint`) and asserts the balances actually changed on-chain. Only
     // the error paths above run in CI; this covers the happy path locally.
 
-    use crate::testkit::{Localnet, docker_available};
+    use crate::harness::{Localnet, docker_available};
 
     const WEI_PER_ETH: u128 = 1_000_000_000_000_000_000;
 

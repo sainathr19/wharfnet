@@ -200,9 +200,9 @@ mod tests {
     // mint exists with the right decimals and each dev account holds the seeded
     // balance. Self-skips without Docker.
 
+    use crate::harness::{Localnet, docker_available};
     use crate::runtime::manifest::Manifest;
     use crate::runtime::orchestrator::manifest_path;
-    use crate::testkit::{Localnet, docker_available};
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::time::Duration;

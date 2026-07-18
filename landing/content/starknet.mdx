@@ -19,6 +19,13 @@ curl -s -X POST http://127.0.0.1:5050/rpc \
   -d '{"jsonrpc":"2.0","id":1,"method":"starknet_chainId","params":[]}'  # -> SN_SEPOLIA
 ```
 
+<Callout type="info">
+  Writing Rust tests? Don't hard-code the addresses below — read them from a
+  running localnet with [`wharfnet::testkit`](/examples):
+  `net.starknet().rpc_url()`, `.token("USDC")`, `.account(0)`, and
+  `.token_abi("USDC")` (the Cairo ABI).
+</Callout>
+
 Each Starknet chain comes with **deterministic predeployed accounts** (fixed
 `--seed`, so they're identical every boot) and the standard **ETH and STRK fee
 tokens** at their canonical addresses — all recorded in the manifest. The RPC is

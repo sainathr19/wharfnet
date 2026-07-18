@@ -15,6 +15,12 @@ wharfnet up
 cast chain-id --rpc-url http://127.0.0.1:8545   # -> 31337
 ```
 
+<Callout type="info">
+  Writing Rust tests? Don't hard-code the addresses below — read them from a
+  running localnet with [`wharfnet::testkit`](/examples): `net.evm().rpc_url()`,
+  `.token("USDC")`, `.account(0)`, and `.token_abi("USDC")`.
+</Callout>
+
 ## Test tokens
 
 Every EVM chain boots with test tokens pre-deployed at fixed addresses

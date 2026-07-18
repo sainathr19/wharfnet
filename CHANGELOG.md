@@ -34,6 +34,19 @@ under _Unreleased_ and the CLI surface may still change.
   - **Not yet**: forking (regtest is standalone — `fork_url` is rejected) and
     persistence (the datadir stays in-container, so every boot is fresh;
     `--resume`/`--reset` are no-ops for these chains). Both may land later.
+- **`wharfnet::testkit` — a Rust test-utils API** — the crate is now a library as
+  well as a CLI. Add `wharfnet` as a `dev-dependency` and, from an integration
+  test, `Localnet::connect()` reads the manifest a running `wharfnet up` wrote and
+  hands back typed accessors: `net.solana().rpc_url()`, `.ws_url()`,
+  `.token("USDC")`, `.account(0)` (address + private key), `.explorer()`, etc. —
+  so tests never hard-code RPC URLs or token addresses. Reuses the existing
+  manifest model; the binary is now a thin shim over the library. The CLI moved
+  into a `cli` module and the internal e2e harness was renamed to `harness`.
+  The bundled test tokens' **contract ABIs** are embedded and exported too —
+  `chain.token_abi("USDC")` (and the raw `wharfnet::abi::{evm,starknet}` JSON
+  constants), generated from the Solidity sources (`solc`) and the compiled Cairo
+  classes — so tests can instantiate a token without fetching or hand-writing an
+  ABI. Solana tokens are standard SPL, so no custom interface is shipped.
 - **Solana WebSocket RPC** — surfpool's WebSocket endpoint is now published, so
   subscriptions (`slotSubscribe`, `logsSubscribe`) and `confirmTransaction` work
   from the host (previously only the HTTP RPC on 8899 was mapped). It's published
