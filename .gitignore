@@ -1,6 +1,9 @@
 /target
 .wharfnet/
 
+# Local editor/agent tooling config — machine-specific, not part of the crate.
+/.claude/
+
 # Isolated temp dirs the docker-backed e2e tests create under the crate root
 # (auto-removed on drop; ignored so a hard-killed run never leaves them staged).
 /.tmp*/

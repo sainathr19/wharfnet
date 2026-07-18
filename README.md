@@ -1,5 +1,9 @@
 # wharfnet
 
+[![crates.io](https://img.shields.io/crates/v/wharfnet.svg)](https://crates.io/crates/wharfnet)
+[![docs](https://img.shields.io/badge/docs-sainathr19.github.io%2Fwharfnet-blue)](https://sainathr19.github.io/wharfnet/)
+[![license](https://img.shields.io/crates/l/wharfnet.svg)](./LICENSE)
+
 **One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.**
 
 > ⚠️ Early WIP. All three stacks — EVM (Anvil), Starknet (starknet-devnet), and
@@ -115,7 +119,7 @@ addresses, all read from the manifest `wharfnet up` writes:
 ```toml
 # Cargo.toml
 [dev-dependencies]
-wharfnet = "0.1"
+wharfnet = "0.1.0-alpha.1"   # pre-release: pin the exact version
 ```
 
 ```rust
