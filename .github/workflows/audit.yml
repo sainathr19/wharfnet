@@ -5,7 +5,10 @@ name: Audit
 on:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  # PR dependency changes are covered by pull_request below; push only needs to
+  # cover main, so a dep change on a PR branch isn't audited twice.
   push:
+    branches: [main]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
