@@ -17,11 +17,12 @@ use std::time::{Duration, Instant};
 use super::config::{self, Config};
 use super::docker;
 use super::engine::{Engine, HealthProbe, StateMode};
-use super::manifest::Manifest;
+use super::manifest::{ChainEntry, Manifest};
 use super::ui;
 use crate::evm::engine::EvmEngine;
 use crate::solana::engine::SolanaEngine;
 use crate::starknet::engine::StarknetEngine;
+use serde::Serialize;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
 pub(crate) const DEFAULT_STATE_DIR: &str = ".wharfnet";
@@ -312,8 +313,8 @@ pub fn down() -> Result<()> {
     down_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT)
 }
 
-pub fn status() -> Result<()> {
-    status_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT)
+pub fn status(json: bool) -> Result<()> {
+    status_in(Path::new(DEFAULT_STATE_DIR), DEFAULT_PROJECT, json)
 }
 
 pub fn logs(selector: Option<&str>, follow: bool) -> Result<()> {
@@ -526,7 +527,13 @@ pub(crate) fn logs_in(
     }
 }
 
-fn status_in(base: &Path, project: &str) -> Result<()> {
+fn status_in(base: &Path, project: &str, json: bool) -> Result<()> {
+    if json {
+        let report = status_report(base)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
     let manifest_file = manifest_path(base);
     if !manifest_file.exists() {
         println!("wharfnet: localnet is not running. Start it with `wharfnet up`.");
@@ -534,6 +541,50 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
     }
 
     let manifest = Manifest::read(&manifest_file)?;
+    print_status_human(&manifest);
+
+    let compose = compose_path(base);
+    if compose.exists() {
+        println!("containers:");
+        let _ = docker::compose_ps(&compose, project);
+    }
+    Ok(())
+}
+
+/// Machine-readable form of `status`, emitted by `--json`. A stable superset of
+/// the manifest: `running` lets a script tell whether a localnet is up without
+/// inspecting the chain list, and each chain entry is the exact manifest schema
+/// `wharfnet::testkit` reads — RPC URLs, chain IDs, accounts, and tokens. When
+/// nothing is running, `running` is `false`, `project` is `null`, and `chains`
+/// is empty, so the output is always valid JSON with a stable set of keys.
+#[derive(Serialize)]
+struct StatusReport {
+    running: bool,
+    project: Option<String>,
+    chains: Vec<ChainEntry>,
+}
+
+/// Build the [`StatusReport`] for the localnet rooted at `base`, reading the
+/// manifest if one is present.
+fn status_report(base: &Path) -> Result<StatusReport> {
+    let manifest_file = manifest_path(base);
+    if !manifest_file.exists() {
+        return Ok(StatusReport {
+            running: false,
+            project: None,
+            chains: Vec::new(),
+        });
+    }
+    let manifest = Manifest::read(&manifest_file)?;
+    Ok(StatusReport {
+        running: true,
+        project: Some(manifest.project),
+        chains: manifest.chains,
+    })
+}
+
+/// Render a manifest as the human-readable `status` report.
+fn print_status_human(manifest: &Manifest) {
     println!("wharfnet localnet — {} chain(s):\n", manifest.chains.len());
     for chain in &manifest.chains {
         println!("  {} [{}]", chain.name, chain.kind);
@@ -562,13 +613,6 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
         }
         println!();
     }
-
-    let compose = compose_path(base);
-    if compose.exists() {
-        println!("containers:");
-        let _ = docker::compose_ps(&compose, project);
-    }
-    Ok(())
 }
 
 fn wait_ready(port: u16, probe: &HealthProbe, timeout: Duration) -> bool {
@@ -954,7 +998,7 @@ mod tests {
     #[test]
     fn status_in_reports_not_running_on_empty_dir() {
         let dir = tempdir().unwrap();
-        assert!(status_in(dir.path(), "wharfnet-test").is_ok());
+        assert!(status_in(dir.path(), "wharfnet-test", false).is_ok());
     }
 
     #[test]
@@ -987,7 +1031,56 @@ mod tests {
         manifest.write(&manifest_path(dir.path())).unwrap();
         // No docker-compose.yml in the dir → the compose_ps branch is skipped,
         // so this needs no Docker.
-        assert!(status_in(dir.path(), "wharfnet-test").is_ok());
+        assert!(status_in(dir.path(), "wharfnet-test", false).is_ok());
+        // The JSON path reads the same manifest and must also succeed.
+        assert!(status_in(dir.path(), "wharfnet-test", true).is_ok());
+    }
+
+    #[test]
+    fn status_report_marks_not_running_on_empty_dir() {
+        let dir = tempdir().unwrap();
+        let report = status_report(dir.path()).unwrap();
+        assert!(!report.running);
+        assert!(report.project.is_none());
+        assert!(report.chains.is_empty());
+
+        // Even with nothing running, the output is valid JSON with stable keys.
+        let json = serde_json::to_string(&report).unwrap();
+        assert_eq!(json, r#"{"running":false,"project":null,"chains":[]}"#);
+    }
+
+    #[test]
+    fn status_report_reflects_manifest_when_running() {
+        let dir = tempdir().unwrap();
+        let manifest = Manifest::new(vec![ChainEntry {
+            name: "anvil-1".into(),
+            kind: "evm".into(),
+            rpc: "http://127.0.0.1:8545".into(),
+            ws: None,
+            chain_id: "31337".into(),
+            accounts: vec![Account {
+                address: "0xabc".into(),
+                private_key: "0xdef".into(),
+                balance: "10000 ETH".into(),
+            }],
+            tokens: vec![],
+            contracts: vec![],
+            fork: None,
+            explorer: None,
+        }]);
+        manifest.write(&manifest_path(dir.path())).unwrap();
+
+        let report = status_report(dir.path()).unwrap();
+        assert!(report.running);
+        assert_eq!(report.project.as_deref(), Some("wharfnet"));
+        assert_eq!(report.chains.len(), 1);
+        assert_eq!(report.chains[0].name, "anvil-1");
+
+        // The chain entries carry the full manifest schema testkit reads.
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains(r#""running":true"#));
+        assert!(json.contains(r#""rpc":"http://127.0.0.1:8545""#));
+        assert!(json.contains(r#""chain_id":"31337""#));
     }
 
     #[test]

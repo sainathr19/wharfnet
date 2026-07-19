@@ -47,11 +47,23 @@ wharfnet up --bare
 ### Check what's running
 
 ```sh
-wharfnet status
+wharfnet status          # formatted, human-readable report
+wharfnet status --json   # machine-readable, for CI and scripts
 ```
 
 `status` prints every chain's RPC (and WebSocket) URL, funded accounts, test
 tokens, and explorer — the same data written to `.wharfnet/wharfnet.json`.
+
+Add `--json` to emit a stable document instead: a top-level `running` flag (so a
+script can tell whether a localnet is up), the `project` name, and a `chains`
+array carrying the exact manifest schema — RPC URLs, chain IDs, accounts, and
+tokens. When nothing is running it's still valid JSON (`running: false`, empty
+`chains`), so a pipeline can branch on it without error handling:
+
+```sh
+# wait for the localnet, then read the first EVM chain's RPC in CI
+wharfnet status --json | jq -r '.chains[] | select(.kind=="evm") | .rpc'
+```
 
 ### Fund an address
 
