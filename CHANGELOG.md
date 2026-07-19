@@ -33,9 +33,13 @@ surface may still change.
   - **Chain control** — `wharfnet bitcoin mine <n>` / `wharfnet litecoin mine <n>`
     produce blocks on demand (regtest `generatetoaddress`). There is no
     time-travel or snapshot analogue for a UTXO chain.
-  - **Not yet**: forking (regtest is standalone — `fork_url` is rejected) and
-    persistence (the datadir stays in-container, so every boot is fresh;
-    `--resume`/`--reset` are no-ops for these chains). Both may land later.
+  - **Persistence** — `up --resume` bind-mounts a per-chain datadir under
+    `.wharfnet/state/` so the whole chain (blocks, wallets, faucet sends) survives
+    `down` → `up --resume`; `up --reset` wipes it for a clean boot, and a default
+    `up` stays ephemeral (datadir in-container, fresh every time) — matching the
+    EVM/Solana chains' state model.
+  - **Not yet**: forking (regtest is standalone — `fork_url` is rejected). May
+    land later.
 - **`wharfnet::testkit` — a Rust test-utils API** — the crate is now a library as
   well as a CLI. Add `wharfnet` as a `dev-dependency` and, from an integration
   test, `Localnet::connect()` reads the manifest a running `wharfnet up` wrote and

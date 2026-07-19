@@ -79,6 +79,15 @@ pub trait Engine {
     fn staged_files(&self, _mode: StateMode) -> Vec<StagedFile> {
         Vec::new()
     }
+    /// Host-side paths (relative to the state dir), each a file or directory,
+    /// that make up this engine's resumable session — wiped by `--reset` and
+    /// used to detect whether a saved session exists. Defaults to none: the
+    /// orchestrator already tracks the `session-*` snapshot files Anvil/surfpool
+    /// dump into `state/`, but a bitcoind datadir is a whole directory the
+    /// filename heuristic can't see, so the UTXO engine declares it here.
+    fn session_paths(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// How to pair this chain with an Otterscan explorer, if it supports one.
     /// Defaults to `None` (no explorer).
     fn explorer_target(&self) -> Option<ExplorerTarget> {

@@ -5,9 +5,10 @@
     # a standalone, on-demand-mined chain (blocks come from `generatetoaddress`,
     # not a timer). RPC is bound on all interfaces with fixed dev credentials so
     # the host can reach it; `-fallbackfee` lets the wallet build faucet sends
-    # without fee estimation. No volume: the datadir stays in-container, so every
-    # boot is fresh (UTXO chains don't yet participate in --resume/--reset).
-    command: ["-regtest", "-server", "-txindex", "-fallbackfee=0.0002", "-rpcuser=wharfnet", "-rpcpassword=wharfnet", "-rpcbind=0.0.0.0", "-rpcallowip=0.0.0.0/0", "-rpcport={{PORT}}", "-printtoconsole"]
+    # without fee estimation. In persistent mode `-datadir` points at a mounted
+    # per-chain datadir (below) so the chain survives `down` → `up --resume`;
+    # ephemeral mode keeps the datadir in-container, so every boot is fresh.
+    command: ["-regtest", "-server", "-txindex", "-fallbackfee=0.0002", "-rpcuser=wharfnet", "-rpcpassword=wharfnet", "-rpcbind=0.0.0.0", "-rpcallowip=0.0.0.0/0", "-rpcport={{PORT}}"{{DATADIR_ARG}}, "-printtoconsole"]
     ports:
-      - "{{HOST_PORT}}:{{PORT}}"
+      - "{{HOST_PORT}}:{{PORT}}"{{VOLUMES}}
     restart: unless-stopped

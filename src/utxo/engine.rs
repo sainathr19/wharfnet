@@ -86,6 +86,13 @@ impl UtxoEngine {
     fn rpc_url(&self) -> String {
         format!("http://{RPC_USER}:{RPC_PASS}@127.0.0.1:{}", self.host_port)
     }
+
+    /// The per-chain datadir, relative to the state dir. Mounted into the
+    /// container (as `/data`) in persistent mode so the chain survives restarts;
+    /// this is the path `--reset` wipes and `--resume` preserves.
+    fn datadir_rel(&self) -> String {
+        format!("state/utxo-{}", self.name)
+    }
 }
 
 impl Engine for UtxoEngine {
@@ -97,14 +104,24 @@ impl Engine for UtxoEngine {
         self.host_port
     }
 
-    fn compose_service(&self, _mode: StateMode) -> String {
-        // State mode is ignored: UTXO chains keep their datadir in-container (no
-        // volume), so every boot is fresh. --resume/--reset don't apply yet.
+    fn compose_service(&self, mode: StateMode) -> String {
+        // Persistent: point the daemon at a mounted per-chain datadir so its state
+        // survives `down` → `up --resume`. Ephemeral: no volume, datadir stays in
+        // the container, so every boot is fresh.
+        let (datadir_arg, volumes) = match mode {
+            StateMode::Persistent => (
+                r#", "-datadir=/data""#.to_string(),
+                format!("\n    volumes:\n      - \"./{}:/data\"", self.datadir_rel()),
+            ),
+            StateMode::Ephemeral => (String::new(), String::new()),
+        };
         UTXO_SERVICE_TEMPLATE
             .replace("{{NAME}}", &self.name)
             .replace("{{IMAGE}}", self.coin.image)
             .replace("{{PORT}}", &self.coin.rpc_port.to_string())
             .replace("{{HOST_PORT}}", &self.host_port.to_string())
+            .replace("{{DATADIR_ARG}}", &datadir_arg)
+            .replace("{{VOLUMES}}", &volumes)
     }
 
     fn manifest_entry(&self) -> ChainEntry {
@@ -135,23 +152,39 @@ impl Engine for UtxoEngine {
         }
     }
 
+    fn session_paths(&self) -> Vec<String> {
+        // The whole datadir is the resumable session; `--reset` wipes it and
+        // `--resume` keeps it. Only materializes on the host in persistent mode.
+        vec![self.datadir_rel()]
+    }
+
     fn post_boot(&self) -> Result<()> {
-        // Once the RPC is live: create the wharfnet wallet, and mine 101 blocks to
-        // a fresh address in it so one coinbase matures. That gives the faucet a
-        // funded source (like Anvil's pre-funded accounts) and a real balance to
-        // advertise. Recorded into `funded` for the manifest.
+        // Once the RPC is live, ensure the wharfnet wallet exists and the chain
+        // holds a matured coinbase, so the faucet has a funded source (like
+        // Anvil's pre-funded accounts). Idempotent: a resumed datadir already has
+        // the wallet and blocks, so we load-not-create and mine only the shortfall.
         let chain = self.manifest_entry();
-        rpc::call(&chain, None, "createwallet", json!([WALLET]))?;
+        // createwallet fails if it already exists (resumed datadir); fall back to
+        // loadwallet so the wallet is available either way.
+        if rpc::call(&chain, None, "createwallet", json!([WALLET])).is_err() {
+            rpc::call(&chain, None, "loadwallet", json!([WALLET]))
+                .context("boot wallet exists but could not be loaded")?;
+        }
         let address = rpc::call(&chain, Some(WALLET), "getnewaddress", json!([]))?
             .as_str()
             .context("getnewaddress did not return an address")?
             .to_string();
-        rpc::call(
-            &chain,
-            Some(WALLET),
-            "generatetoaddress",
-            json!([BOOT_BLOCKS, address]),
-        )?;
+        let height = rpc::call(&chain, None, "getblockcount", json!([]))?
+            .as_u64()
+            .unwrap_or(0);
+        if height < BOOT_BLOCKS {
+            rpc::call(
+                &chain,
+                Some(WALLET),
+                "generatetoaddress",
+                json!([BOOT_BLOCKS - height, address]),
+            )?;
+        }
         let balance = rpc::call(&chain, Some(WALLET), "getbalance", json!([]))?
             .as_f64()
             .unwrap_or(0.0);
@@ -194,6 +227,25 @@ mod tests {
             assert!(yaml.contains(&format!("\"40000:{}\"", coin.rpc_port)));
             assert!(!yaml.contains("{{"), "no placeholder should remain: {yaml}");
         }
+    }
+
+    #[test]
+    fn persistent_compose_mounts_a_per_chain_datadir() {
+        let engine = UtxoEngine::new(BITCOIN, "bitcoin-1", 18443);
+        let yaml = engine.compose_service(StateMode::Persistent);
+        // Daemon points at the mounted datadir, and the host dir is bind-mounted.
+        assert!(yaml.contains("\"-datadir=/data\""));
+        assert!(yaml.contains("./state/utxo-bitcoin-1:/data"));
+        // That path is what --reset wipes / --resume preserves.
+        assert_eq!(
+            engine.session_paths(),
+            vec!["state/utxo-bitcoin-1".to_string()]
+        );
+
+        // Ephemeral keeps the datadir in-container: no volume, no -datadir flag.
+        let eph = engine.compose_service(StateMode::Ephemeral);
+        assert!(!eph.contains("\"-datadir=/data\""));
+        assert!(!eph.contains("volumes:"));
     }
 
     #[test]
@@ -342,9 +394,39 @@ mod tests {
         );
     }
 
+    /// The chain's current block height, via `getblockcount` (no wallet needed).
+    /// A clean persistence signal: it's baked at boot (101) and grows as the
+    /// faucet mines, so it survives `--resume` and resets on `--reset`.
+    fn block_count(rpc_url: &str) -> u64 {
+        use std::io::{Read, Write};
+        use std::net::TcpStream;
+        let authority = rpc_url
+            .strip_prefix("http://")
+            .unwrap_or(rpc_url)
+            .split('/')
+            .next()
+            .unwrap();
+        let hostport = authority.rsplit_once('@').map_or(authority, |(_, hp)| hp);
+        let mut stream = TcpStream::connect(hostport).unwrap();
+        let body = r#"{"jsonrpc":"1.0","id":1,"method":"getblockcount","params":[]}"#;
+        let req = format!(
+            "POST / HTTP/1.1\r\nHost: h\r\nAuthorization: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            rpc::RPC_AUTH_HEADER,
+            body.len(),
+            body
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut resp = String::new();
+        stream.read_to_string(&mut resp).unwrap();
+        let payload = resp.rsplit("\r\n\r\n").next().unwrap_or("");
+        let v: serde_json::Value = serde_json::from_str(payload.trim()).unwrap();
+        v["result"].as_u64().unwrap()
+    }
+
     /// A dedicated high port, clear of the other e2e ports (Solana at 189xx).
     const BTC_E2E_PORT: u16 = 28443;
     const LTC_E2E_PORT: u16 = 29443;
+    const BTC_PERSIST_PORT: u16 = 28444;
 
     #[test]
     fn bitcoin_regtest_boots_funded_and_faucets() {
@@ -364,5 +446,77 @@ mod tests {
         }
         let net = Localnet::boot_litecoin("t-litecoin", LTC_E2E_PORT);
         assert_boots_funded_and_faucets(&net, "LTC");
+    }
+
+    /// The datadir is bind-mounted in persistent mode, so chain state must
+    /// survive `down` → `up --resume` and be wiped by `up --reset`. Drives the
+    /// orchestrator directly (the `boot_*` harness only does fresh boots) and
+    /// uses block height as the persistence signal. Bitcoin and Litecoin share
+    /// the engine, so one coin covers both. Self-skips without Docker.
+    #[test]
+    fn bitcoin_state_survives_resume_and_resets_on_reset() {
+        if !docker_available() {
+            eprintln!("skipping bitcoin persistence e2e: docker unavailable");
+            return;
+        }
+        use crate::runtime::orchestrator::{self, UpMode};
+
+        let dir = tempfile::TempDir::new_in(".").expect("temp dir under crate root");
+        let base = dir.path();
+        let project = "wharfnet-e2e-btc-persist";
+        let chain = "btc-persist";
+        let config = base.join("wharfnet.toml");
+        std::fs::write(
+            &config,
+            format!(
+                "[[chains]]\nname = \"{chain}\"\nkind = \"bitcoin\"\nport = {BTC_PERSIST_PORT}\n"
+            ),
+        )
+        .unwrap();
+        let rpc_url = format!("http://{RPC_USER}:{RPC_PASS}@127.0.0.1:{BTC_PERSIST_PORT}");
+
+        // Tear the containers down even if an assertion panics. Declared after
+        // `dir` so it drops first — down_in still sees the compose file.
+        struct Teardown<'a>(&'a std::path::Path, &'a str);
+        impl Drop for Teardown<'_> {
+            fn drop(&mut self) {
+                let _ = crate::runtime::orchestrator::down_in(self.0, self.1);
+            }
+        }
+        let _guard = Teardown(base, project);
+
+        // 1) First `up --resume`: fresh datadir, boot mines 101. Fund a fresh
+        //    recipient — the faucet mines a block, so the height climbs past 101.
+        orchestrator::up_in(base, project, UpMode::Resume, false, Some(&config))
+            .expect("first up --resume should boot");
+        let boot_height = block_count(&rpc_url);
+        assert_eq!(boot_height, BOOT_BLOCKS, "boot should mine {BOOT_BLOCKS}");
+        let recipient = fresh_recipient(&rpc_url, "recv");
+        crate::faucet::run_in(base, project, chain, &recipient, "2.5", None, false)
+            .expect("faucet should fund the recipient");
+        let funded_height = block_count(&rpc_url);
+        assert!(funded_height > boot_height, "faucet should mine a block");
+
+        // 2) Tear down (the bind-mounted datadir survives on the host) and resume:
+        //    the chain restores, so the height is exactly where we left it.
+        orchestrator::down_in(base, project).expect("down should succeed");
+        orchestrator::up_in(base, project, UpMode::Resume, false, Some(&config))
+            .expect("second up --resume should boot");
+        assert_eq!(
+            block_count(&rpc_url),
+            funded_height,
+            "chain height must survive down → up --resume"
+        );
+
+        // 3) `up --reset` wipes the datadir and boots fresh — height is back to
+        //    the baked coinbase count, with the faucet's block gone.
+        orchestrator::down_in(base, project).expect("down before reset should succeed");
+        orchestrator::up_in(base, project, UpMode::Reset, false, Some(&config))
+            .expect("up --reset should boot");
+        assert_eq!(
+            block_count(&rpc_url),
+            BOOT_BLOCKS,
+            "up --reset must discard the persisted chain"
+        );
     }
 }

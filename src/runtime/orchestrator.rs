@@ -255,29 +255,50 @@ fn stage_files(base: &Path, engines: &[Box<dyn Engine>], mode: StateMode) -> Res
     Ok(())
 }
 
-/// Delete every saved per-chain session snapshot under the state dir. Used by
+/// Delete every saved per-chain session under the state dir. Used by
 /// `up --reset` to guarantee a clean slate. Missing dir / files are fine.
-fn clear_sessions(base: &Path) -> Result<()> {
-    let state = base.join("state");
-    let Ok(entries) = fs::read_dir(&state) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        if is_session_file(&entry.file_name().to_string_lossy()) {
-            let _ = fs::remove_file(entry.path());
+fn clear_sessions(base: &Path, engines: &[Box<dyn Engine>]) -> Result<()> {
+    // Anvil/starknet-devnet/surfpool dump `session-*` snapshot files into state/.
+    if let Ok(entries) = fs::read_dir(base.join("state")) {
+        for entry in entries.flatten() {
+            if is_session_file(&entry.file_name().to_string_lossy()) {
+                let _ = fs::remove_file(entry.path());
+            }
         }
+    }
+    // Engines with a directory-shaped session (a UTXO datadir) name it explicitly.
+    for path in engine_session_paths(base, engines) {
+        let _ = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
     }
     Ok(())
 }
 
-/// Whether any saved per-chain session snapshot exists under the state dir.
-fn has_saved_session(base: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(base.join("state")) else {
-        return false;
-    };
-    entries
-        .flatten()
-        .any(|e| is_session_file(&e.file_name().to_string_lossy()))
+/// Whether any saved per-chain session exists under the state dir.
+fn has_saved_session(base: &Path, engines: &[Box<dyn Engine>]) -> bool {
+    let file_session = fs::read_dir(base.join("state"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| is_session_file(&e.file_name().to_string_lossy()))
+        })
+        .unwrap_or(false);
+    file_session
+        || engine_session_paths(base, engines)
+            .into_iter()
+            .any(|p| p.exists())
+}
+
+/// Absolute paths of every engine-declared session file/dir under the state dir.
+fn engine_session_paths(base: &Path, engines: &[Box<dyn Engine>]) -> Vec<std::path::PathBuf> {
+    engines
+        .iter()
+        .flat_map(|e| e.session_paths())
+        .map(|rel| base.join(rel))
+        .collect()
 }
 
 fn is_session_file(name: &str) -> bool {
@@ -349,10 +370,10 @@ pub(crate) fn up_in(
     check_ports(&engines, &explorers)?;
 
     if mode == UpMode::Reset {
-        clear_sessions(base)?;
+        clear_sessions(base, &engines)?;
     }
     // Note whether we're resuming before staging seeds any missing sessions.
-    let resuming = mode == UpMode::Resume && has_saved_session(base);
+    let resuming = mode == UpMode::Resume && has_saved_session(base, &engines);
 
     fs::create_dir_all(base)?;
     fs::write(
@@ -470,7 +491,7 @@ pub(crate) fn up_in(
                 "\n💾 Persistent: balances, txs & deployments survive `down` → `up --resume`."
             );
         }
-        UpMode::Fresh if has_saved_session(base) => {
+        UpMode::Fresh if has_saved_session(base, &engines) => {
             println!(
                 "\nℹ️  A saved session exists. Restore it with `up --resume`, or discard it with `up --reset`."
             );
@@ -950,9 +971,9 @@ mod tests {
         fs::write(state.join("session-solana-1.sqlite-shm"), "shm").unwrap();
         fs::write(state.join("anvil-tokens.json"), "baked").unwrap();
 
-        assert!(has_saved_session(dir.path()));
-        clear_sessions(dir.path()).unwrap();
-        assert!(!has_saved_session(dir.path()));
+        assert!(has_saved_session(dir.path(), &engines()));
+        clear_sessions(dir.path(), &engines()).unwrap();
+        assert!(!has_saved_session(dir.path(), &engines()));
         // The baked snapshot is left intact.
         assert!(state.join("anvil-tokens.json").exists());
         assert!(!state.join("session-anvil-1.json").exists());
@@ -966,9 +987,9 @@ mod tests {
     #[test]
     fn has_saved_session_false_without_state_dir() {
         let dir = tempdir().unwrap();
-        assert!(!has_saved_session(dir.path()));
+        assert!(!has_saved_session(dir.path(), &engines()));
         // clear on a missing state dir is a no-op, not an error.
-        assert!(clear_sessions(dir.path()).is_ok());
+        assert!(clear_sessions(dir.path(), &engines()).is_ok());
     }
 
     #[test]
