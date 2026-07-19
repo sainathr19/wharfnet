@@ -43,11 +43,13 @@ Full docs — install, configuration, and per-chain guides (tokens, faucet, chai
 control, forking, explorer, persistence) — live at
 **[sainathr19.github.io/wharfnet](https://sainathr19.github.io/wharfnet/)**:
 
-| Chain                          | Default node    | Guide                                                        |
-| ------------------------------ | --------------- | ------------------------------------------------------------ |
-| **EVM** (`anvil-1`, `anvil-2`) | Anvil           | [/evm](https://sainathr19.github.io/wharfnet/evm)           |
-| **Starknet** (`starknet-1`)    | starknet-devnet | [/starknet](https://sainathr19.github.io/wharfnet/starknet) |
-| **Solana** (`solana-1`)        | surfpool        | [/solana](https://sainathr19.github.io/wharfnet/solana)     |
+All the chains are grouped under **[Chains](https://sainathr19.github.io/wharfnet/chains/overview)**, one guide each:
+
+| Chain                          | Default node    | Guide                                                                    |
+| ------------------------------ | --------------- | ------------------------------------------------------------------------ |
+| **EVM** (`anvil-1`, `anvil-2`) | Anvil           | [/chains/evm](https://sainathr19.github.io/wharfnet/chains/evm)           |
+| **Starknet** (`starknet-1`)    | starknet-devnet | [/chains/starknet](https://sainathr19.github.io/wharfnet/chains/starknet) |
+| **Solana** (`solana-1`)        | surfpool        | [/chains/solana](https://sainathr19.github.io/wharfnet/chains/solana)     |
 
 The site is a [Nextra](https://nextra.site) app under [`landing/`](landing/),
 deployed to GitHub Pages on every push to `main` (source pages live in
