@@ -34,8 +34,8 @@ cargo test
 ## Adding a chain kind or capability
 
 Chains implement the `Engine` trait in `src/runtime/engine.rs`; the per-chain
-code lives under `src/<kind>/`. The per-chain guides ([EVM](/evm),
-[Starknet](/starknet), [Solana](/solana)) describe how each stack wires up
+code lives under `src/<kind>/`. The per-chain guides ([EVM](/chains/evm),
+[Starknet](/chains/starknet), [Solana](/chains/solana)) describe how each stack wires up
 tokens, faucet, forking, and its explorer — a good map before you extend one.
 
 ## Editing these docs
