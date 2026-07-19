@@ -534,6 +534,18 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
     }
 
     let manifest = Manifest::read(&manifest_file)?;
+    print_status_human(&manifest);
+
+    let compose = compose_path(base);
+    if compose.exists() {
+        println!("containers:");
+        let _ = docker::compose_ps(&compose, project);
+    }
+    Ok(())
+}
+
+/// Render a manifest as the human-readable `status` report.
+fn print_status_human(manifest: &Manifest) {
     println!("wharfnet localnet — {} chain(s):\n", manifest.chains.len());
     for chain in &manifest.chains {
         println!("  {} [{}]", chain.name, chain.kind);
@@ -562,13 +574,6 @@ fn status_in(base: &Path, project: &str) -> Result<()> {
         }
         println!();
     }
-
-    let compose = compose_path(base);
-    if compose.exists() {
-        println!("containers:");
-        let _ = docker::compose_ps(&compose, project);
-    }
-    Ok(())
 }
 
 fn wait_ready(port: u16, probe: &HealthProbe, timeout: Duration) -> bool {
