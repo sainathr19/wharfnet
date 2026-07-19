@@ -1,8 +1,11 @@
 name: Lint
 
 on:
+  # PRs are validated by the pull_request trigger below (on every commit), so
+  # push only needs to cover direct pushes / merge commits to main. Listing dev
+  # here too would double every check while a dev PR is open.
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
     branches: [main, dev]
 
