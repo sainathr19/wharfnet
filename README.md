@@ -93,6 +93,9 @@ wharfnet up --reset
 # check what's running
 wharfnet status
 
+# machine-readable status for CI and scripts (pipe to jq, etc.)
+wharfnet status --json
+
 # fund an address with native coin + every bundled token, on all EVM chains
 wharfnet faucet evm 0xabc... 100
 
