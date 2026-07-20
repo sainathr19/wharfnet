@@ -10,6 +10,8 @@ surface may still change.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.1] - 2026-07-20
+
 ### Added
 
 - **`wharfnet status --json`** — machine-readable status output for CI and
@@ -19,10 +21,6 @@ surface may still change.
   URLs, chain IDs, accounts, tokens). When nothing is running the output is still
   valid JSON (`running: false`, empty `chains`), so a pipeline can branch on it
   without special-casing. The default human-readable output is unchanged.
-
-## [0.1.0-alpha.1] - 2026-07-18
-
-### Added
 
 - **`wharfnet::testkit` — a Rust test-utils API** — the crate is now a library as
   well as a CLI. Add `wharfnet` as a `dev-dependency` and, from an integration
