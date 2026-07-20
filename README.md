@@ -1,8 +1,8 @@
 # wharfnet
 
-[![crates.io](https://img.shields.io/crates/v/wharfnet.svg)](https://crates.io/crates/wharfnet)
+[![ci](https://img.shields.io/github/actions/workflow/status/sainathr19/wharfnet/test.yml?branch=main&label=ci)](https://github.com/sainathr19/wharfnet/actions/workflows/test.yml)
 [![docs](https://img.shields.io/badge/docs-sainathr19.github.io%2Fwharfnet-blue)](https://sainathr19.github.io/wharfnet/)
-[![license](https://img.shields.io/crates/l/wharfnet.svg)](./LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 **One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.**
 
