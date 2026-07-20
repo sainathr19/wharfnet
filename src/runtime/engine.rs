@@ -20,11 +20,27 @@ pub enum StateMode {
     Persistent,
 }
 
-/// How to point a bundled block explorer at a chain. The browser talks to the
-/// chain directly, so it needs the chain's *published host* RPC port.
-pub struct ExplorerTarget {
-    pub chain_name: String,
-    pub rpc_host_port: u16,
+/// How to pair a chain with a bundled block-explorer container. Each variant
+/// carries the chain-side facts its explorer flavor needs; the orchestrator
+/// assigns the explorer's own host port and renders the compose service.
+#[derive(Debug)]
+pub enum ExplorerTarget {
+    /// Otterscan — a static host-side frontend. The *browser* makes the RPC
+    /// calls, so it's wired to the chain's published *host* RPC port.
+    Otterscan {
+        chain_name: String,
+        rpc_host_port: u16,
+    },
+    /// btc-rpc-explorer — a server-side app that makes RPC calls itself, over the
+    /// docker network, so it's wired to the chain's in-network service name +
+    /// *internal* RPC port and auth credentials.
+    BtcRpc {
+        chain_name: String,
+        rpc_service: String,
+        rpc_port: u16,
+        rpc_user: String,
+        rpc_pass: String,
+    },
 }
 
 /// How the orchestrator decides a chain's RPC is ready. Different engines speak

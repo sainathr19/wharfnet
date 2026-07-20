@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use super::config::{self, Config};
 use super::docker;
-use super::engine::{Engine, HealthProbe, StateMode};
+use super::engine::{Engine, ExplorerTarget, HealthProbe, StateMode};
 use super::manifest::Manifest;
 use super::ui;
 use crate::evm::engine::EvmEngine;
@@ -33,6 +33,13 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const OTTERSCAN_IMAGE: &str = "otterscan/otterscan:v2.11.0";
 /// Compose service template for an Otterscan explorer.
 const OTTERSCAN_SERVICE_TEMPLATE: &str = include_str!("../resources/docker/services/otterscan.yml");
+/// Pinned btc-rpc-explorer image — the UTXO analogue of Otterscan. It connects
+/// straight to bitcoind over RPC (no electrs/indexer/DB). BTC-only, so it backs
+/// Bitcoin chains but not Litecoin.
+const BTC_RPC_EXPLORER_IMAGE: &str = "getumbrel/btc-rpc-explorer:v3.4.0";
+/// Compose service template for a btc-rpc-explorer.
+const BTC_RPC_EXPLORER_TEMPLATE: &str =
+    include_str!("../resources/docker/services/btc-rpc-explorer.yml");
 /// First host port for explorers; each subsequent chain's explorer takes the next.
 const EXPLORER_BASE_PORT: u16 = 5100;
 
@@ -123,16 +130,33 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
     }
 }
 
-/// A resolved Otterscan explorer for one chain: its service name, the host port
-/// it's published on, the generated frontend config, and the URL to open.
+/// A resolved explorer for one chain: its service name, the host port it's
+/// published on, the URL to open, and the flavor-specific render inputs.
 struct ExplorerService {
     service_name: String,
     chain_name: String,
     host_port: u16,
-    config_rel_path: String,
-    config_file: String,
-    config_json: String,
     url: String,
+    render: ExplorerRender,
+}
+
+/// Flavor-specific inputs for rendering an explorer's compose service.
+enum ExplorerRender {
+    /// Otterscan: a static frontend configured by a mounted `config.json` the
+    /// browser reads before calling the chain RPC itself.
+    Otterscan {
+        config_file: String,
+        config_rel_path: String,
+        config_json: String,
+    },
+    /// btc-rpc-explorer: configured entirely via env vars (server-side RPC), so
+    /// there is no mounted config file to stage.
+    BtcRpc {
+        rpc_service: String,
+        rpc_port: u16,
+        rpc_user: String,
+        rpc_pass: String,
+    },
 }
 
 /// Build one explorer per explorer-capable chain, assigning host ports from
@@ -146,23 +170,49 @@ fn explorer_services(engines: &[Box<dyn Engine>]) -> Vec<ExplorerService> {
         };
         let host_port = port;
         port += 1;
-        let config_file = format!("otterscan-{}.json", target.chain_name);
-        // The browser (on the host) hits both the chain RPC and the explorer's
-        // own bundled assets, so both URLs use published host ports.
-        let config_json = format!(
-            "{{\n  \"erigonURL\": \"http://127.0.0.1:{rpc}\",\n  \"assetsURLPrefix\": \"http://127.0.0.1:{exp}\"\n}}\n",
-            rpc = target.rpc_host_port,
-            exp = host_port,
-        );
-        services.push(ExplorerService {
-            service_name: format!("explorer-{}", target.chain_name),
-            chain_name: target.chain_name,
-            host_port,
-            config_rel_path: format!("state/{config_file}"),
-            config_file,
-            config_json,
-            url: format!("http://127.0.0.1:{host_port}"),
-        });
+        let svc = match target {
+            ExplorerTarget::Otterscan {
+                chain_name,
+                rpc_host_port,
+            } => {
+                let config_file = format!("otterscan-{chain_name}.json");
+                // The browser (on the host) hits both the chain RPC and the
+                // explorer's own bundled assets, so both URLs use host ports.
+                let config_json = format!(
+                    "{{\n  \"erigonURL\": \"http://127.0.0.1:{rpc_host_port}\",\n  \"assetsURLPrefix\": \"http://127.0.0.1:{host_port}\"\n}}\n",
+                );
+                ExplorerService {
+                    service_name: format!("explorer-{chain_name}"),
+                    host_port,
+                    url: format!("http://127.0.0.1:{host_port}"),
+                    render: ExplorerRender::Otterscan {
+                        config_rel_path: format!("state/{config_file}"),
+                        config_file,
+                        config_json,
+                    },
+                    chain_name,
+                }
+            }
+            ExplorerTarget::BtcRpc {
+                chain_name,
+                rpc_service,
+                rpc_port,
+                rpc_user,
+                rpc_pass,
+            } => ExplorerService {
+                service_name: format!("explorer-{chain_name}"),
+                host_port,
+                url: format!("http://127.0.0.1:{host_port}"),
+                render: ExplorerRender::BtcRpc {
+                    rpc_service,
+                    rpc_port,
+                    rpc_user,
+                    rpc_pass,
+                },
+                chain_name,
+            },
+        };
+        services.push(svc);
     }
     services
 }
@@ -196,11 +246,26 @@ fn check_ports(engines: &[Box<dyn Engine>], explorers: &[ExplorerService]) -> Re
 }
 
 fn render_explorer_service(svc: &ExplorerService) -> String {
-    OTTERSCAN_SERVICE_TEMPLATE
-        .replace("{{NAME}}", &svc.service_name)
-        .replace("{{IMAGE}}", OTTERSCAN_IMAGE)
-        .replace("{{HOST_PORT}}", &svc.host_port.to_string())
-        .replace("{{CONFIG_FILE}}", &svc.config_file)
+    match &svc.render {
+        ExplorerRender::Otterscan { config_file, .. } => OTTERSCAN_SERVICE_TEMPLATE
+            .replace("{{NAME}}", &svc.service_name)
+            .replace("{{IMAGE}}", OTTERSCAN_IMAGE)
+            .replace("{{HOST_PORT}}", &svc.host_port.to_string())
+            .replace("{{CONFIG_FILE}}", config_file),
+        ExplorerRender::BtcRpc {
+            rpc_service,
+            rpc_port,
+            rpc_user,
+            rpc_pass,
+        } => BTC_RPC_EXPLORER_TEMPLATE
+            .replace("{{NAME}}", &svc.service_name)
+            .replace("{{IMAGE}}", BTC_RPC_EXPLORER_IMAGE)
+            .replace("{{HOST_PORT}}", &svc.host_port.to_string())
+            .replace("{{RPC_SERVICE}}", rpc_service)
+            .replace("{{RPC_PORT}}", &rpc_port.to_string())
+            .replace("{{RPC_USER}}", rpc_user)
+            .replace("{{RPC_PASS}}", rpc_pass),
+    }
 }
 
 fn render_compose(
@@ -222,14 +287,23 @@ fn render_compose(
 }
 
 /// Write each explorer's generated `config.json` under the state dir so the
-/// compose file can mount it into the Otterscan container.
+/// compose file can mount it into the container. Only Otterscan needs one;
+/// btc-rpc-explorer is configured via env vars, so it stages nothing.
 fn stage_explorer_configs(base: &Path, explorers: &[ExplorerService]) -> Result<()> {
     for svc in explorers {
-        let dest = base.join(&svc.config_rel_path);
+        let ExplorerRender::Otterscan {
+            config_rel_path,
+            config_json,
+            ..
+        } = &svc.render
+        else {
+            continue;
+        };
+        let dest = base.join(config_rel_path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&dest, &svc.config_json)?;
+        fs::write(&dest, config_json)?;
     }
     Ok(())
 }
@@ -710,26 +784,50 @@ mod tests {
     #[test]
     fn explorer_services_are_assigned_ports_and_configs_per_chain() {
         let svcs = explorer_services(&engines());
-        assert_eq!(svcs.len(), 2, "one explorer per EVM chain");
+        // One Otterscan per EVM chain, plus a btc-rpc-explorer for the Bitcoin
+        // chain (Litecoin gets none). Ports are handed out in engine order.
+        assert_eq!(svcs.len(), 3);
 
         assert_eq!(svcs[0].service_name, "explorer-anvil-1");
         assert_eq!(svcs[0].host_port, 5100);
         assert_eq!(svcs[0].url, "http://127.0.0.1:5100");
-        assert_eq!(svcs[0].config_rel_path, "state/otterscan-anvil-1.json");
-        // anvil-1 is published on 8545, so the browser points there.
-        assert!(
-            svcs[0]
-                .config_json
-                .contains("\"erigonURL\": \"http://127.0.0.1:8545\"")
-        );
+        match &svcs[0].render {
+            ExplorerRender::Otterscan {
+                config_rel_path,
+                config_json,
+                ..
+            } => {
+                assert_eq!(config_rel_path, "state/otterscan-anvil-1.json");
+                // anvil-1 is published on 8545, so the browser points there.
+                assert!(config_json.contains("\"erigonURL\": \"http://127.0.0.1:8545\""));
+            }
+            _ => panic!("anvil-1 should get an Otterscan explorer"),
+        }
 
         assert_eq!(svcs[1].service_name, "explorer-anvil-2");
         assert_eq!(svcs[1].host_port, 5101);
-        assert!(
-            svcs[1]
-                .config_json
-                .contains("\"erigonURL\": \"http://127.0.0.1:8546\"")
-        );
+        match &svcs[1].render {
+            ExplorerRender::Otterscan { config_json, .. } => {
+                assert!(config_json.contains("\"erigonURL\": \"http://127.0.0.1:8546\""));
+            }
+            _ => panic!("anvil-2 should get an Otterscan explorer"),
+        }
+
+        // The Bitcoin chain gets a btc-rpc-explorer wired to its in-network RPC
+        // (service name + internal port), not a published host port.
+        assert_eq!(svcs[2].service_name, "explorer-bitcoin-1");
+        assert_eq!(svcs[2].host_port, 5102);
+        match &svcs[2].render {
+            ExplorerRender::BtcRpc {
+                rpc_service,
+                rpc_port,
+                ..
+            } => {
+                assert_eq!(rpc_service, "bitcoin-1");
+                assert_eq!(*rpc_port, 18443);
+            }
+            _ => panic!("bitcoin-1 should get a btc-rpc-explorer"),
+        }
     }
 
     #[test]

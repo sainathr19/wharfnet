@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use serde_json::json;
 
 use super::rpc::{self, RPC_PASS, RPC_USER, WALLET};
-use crate::runtime::engine::{Engine, HealthProbe, StateMode};
+use crate::runtime::engine::{Engine, ExplorerTarget, HealthProbe, StateMode};
 use crate::runtime::manifest::{Account, ChainEntry};
 
 /// Static parameters that distinguish the two otherwise-identical daemons.
@@ -33,6 +33,11 @@ pub struct Coin {
     pub rpc_port: u16,
     /// Native coin symbol, for manifest balances and the faucet's default token.
     pub symbol: &'static str,
+    /// The env var the image entrypoint reads to place the datadir. Both images
+    /// append their own `-datadir=$..._DATA` after our flags, so a `-datadir`
+    /// command arg is silently overridden — we must set this var to `/data`
+    /// instead. Differs per coin (`BITCOIN_DATA` vs `LITECOIN_DATA`).
+    pub datadir_env: &'static str,
 }
 
 /// Bitcoin Core in regtest. `bitcoin/bitcoin` is the official image; `:29` speaks
@@ -42,6 +47,7 @@ pub const BITCOIN: Coin = Coin {
     image: "bitcoin/bitcoin:29",
     rpc_port: 18443,
     symbol: "BTC",
+    datadir_env: "BITCOIN_DATA",
 };
 
 /// Litecoin Core in regtest. `:0.21` is Litecoin Core v0.21.2.2 — a Bitcoin-0.21
@@ -51,6 +57,7 @@ pub const LITECOIN: Coin = Coin {
     image: "uphold/litecoin-core:0.21",
     rpc_port: 19443,
     symbol: "LTC",
+    datadir_env: "LITECOIN_DATA",
 };
 
 /// Blocks mined at boot. Coinbase maturity in regtest is 100, so 101 blocks leaves
@@ -105,12 +112,19 @@ impl Engine for UtxoEngine {
     }
 
     fn compose_service(&self, mode: StateMode) -> String {
-        // Persistent: point the daemon at a mounted per-chain datadir so its state
-        // survives `down` → `up --resume`. Ephemeral: no volume, datadir stays in
-        // the container, so every boot is fresh.
-        let (datadir_arg, volumes) = match mode {
+        // Persistent: bind-mount a per-chain datadir and place the daemon's data
+        // there so state survives `down` → `up --resume`. The datadir must be set
+        // via the image's env var (`$..._DATA`), not a `-datadir` arg: both
+        // entrypoints append their own `-datadir=$..._DATA` after our flags, which
+        // would override the arg and send data to the image's anonymous volume
+        // (wiped by `down -v`). Ephemeral: no volume, datadir stays in the
+        // container, so every boot is fresh.
+        let (environment, volumes) = match mode {
             StateMode::Persistent => (
-                r#", "-datadir=/data""#.to_string(),
+                format!(
+                    "\n    environment:\n      - \"{}=/data\"",
+                    self.coin.datadir_env
+                ),
                 format!("\n    volumes:\n      - \"./{}:/data\"", self.datadir_rel()),
             ),
             StateMode::Ephemeral => (String::new(), String::new()),
@@ -120,7 +134,7 @@ impl Engine for UtxoEngine {
             .replace("{{IMAGE}}", self.coin.image)
             .replace("{{PORT}}", &self.coin.rpc_port.to_string())
             .replace("{{HOST_PORT}}", &self.host_port.to_string())
-            .replace("{{DATADIR_ARG}}", &datadir_arg)
+            .replace("{{ENVIRONMENT}}", &environment)
             .replace("{{VOLUMES}}", &volumes)
     }
 
@@ -150,6 +164,23 @@ impl Engine for UtxoEngine {
             method: "getblockchaininfo",
             authorization: rpc::RPC_AUTH_HEADER,
         }
+    }
+
+    fn explorer_target(&self) -> Option<ExplorerTarget> {
+        // btc-rpc-explorer is Bitcoin-only (the published image ships no Litecoin
+        // coin config), so only Bitcoin gets a bundled explorer. Unlike Otterscan,
+        // it makes its RPC calls server-side, so it reaches bitcoind over the
+        // docker network via the chain's service name + internal RPC port.
+        if self.coin.kind != "bitcoin" {
+            return None;
+        }
+        Some(ExplorerTarget::BtcRpc {
+            chain_name: self.name.clone(),
+            rpc_service: self.name.clone(),
+            rpc_port: self.coin.rpc_port,
+            rpc_user: RPC_USER.to_string(),
+            rpc_pass: RPC_PASS.to_string(),
+        })
     }
 
     fn session_paths(&self) -> Vec<String> {
@@ -231,21 +262,28 @@ mod tests {
 
     #[test]
     fn persistent_compose_mounts_a_per_chain_datadir() {
-        let engine = UtxoEngine::new(BITCOIN, "bitcoin-1", 18443);
-        let yaml = engine.compose_service(StateMode::Persistent);
-        // Daemon points at the mounted datadir, and the host dir is bind-mounted.
-        assert!(yaml.contains("\"-datadir=/data\""));
-        assert!(yaml.contains("./state/utxo-bitcoin-1:/data"));
-        // That path is what --reset wipes / --resume preserves.
-        assert_eq!(
-            engine.session_paths(),
-            vec!["state/utxo-bitcoin-1".to_string()]
-        );
+        // Datadir is placed via the image's env var (the entrypoint appends its
+        // own `-datadir`, which would override a flag), and the host dir is
+        // bind-mounted. Per coin: BITCOIN_DATA vs LITECOIN_DATA.
+        for (coin, env) in [(BITCOIN, "BITCOIN_DATA"), (LITECOIN, "LITECOIN_DATA")] {
+            let engine = UtxoEngine::new(coin, "utxo-1", 40000);
+            let yaml = engine.compose_service(StateMode::Persistent);
+            assert!(yaml.contains(&format!("\"{env}=/data\"")), "{yaml}");
+            assert!(yaml.contains("./state/utxo-utxo-1:/data"));
+            // The datadir is placed via the env var, not an overridable command
+            // flag (a `-datadir=` arg would be the broken form).
+            assert!(!yaml.contains("\"-datadir="), "{yaml}");
+            // That path is what --reset wipes / --resume preserves.
+            assert_eq!(
+                engine.session_paths(),
+                vec!["state/utxo-utxo-1".to_string()]
+            );
 
-        // Ephemeral keeps the datadir in-container: no volume, no -datadir flag.
-        let eph = engine.compose_service(StateMode::Ephemeral);
-        assert!(!eph.contains("\"-datadir=/data\""));
-        assert!(!eph.contains("volumes:"));
+            // Ephemeral keeps the datadir in-container: no volume, no env var.
+            let eph = engine.compose_service(StateMode::Ephemeral);
+            assert!(!eph.contains(env));
+            assert!(!eph.contains("volumes:"));
+        }
     }
 
     #[test]
@@ -261,6 +299,31 @@ mod tests {
         assert!(entry.contracts.is_empty());
         assert!(entry.accounts.is_empty());
         assert!(entry.fork.is_none());
+    }
+
+    #[test]
+    fn only_bitcoin_exposes_an_explorer_target() {
+        // btc-rpc-explorer is BTC-only, so Bitcoin gets an explorer wired to its
+        // in-network RPC (service name + internal port) and Litecoin gets none.
+        match UtxoEngine::new(BITCOIN, "bitcoin-1", 18443).explorer_target() {
+            Some(ExplorerTarget::BtcRpc {
+                chain_name,
+                rpc_service,
+                rpc_port,
+                ..
+            }) => {
+                assert_eq!(chain_name, "bitcoin-1");
+                assert_eq!(rpc_service, "bitcoin-1");
+                assert_eq!(rpc_port, 18443);
+            }
+            other => panic!("bitcoin should expose a BtcRpc explorer, got {other:?}"),
+        }
+        assert!(
+            UtxoEngine::new(LITECOIN, "litecoin-1", 19443)
+                .explorer_target()
+                .is_none(),
+            "litecoin ships no explorer"
+        );
     }
 
     #[test]
@@ -427,6 +490,32 @@ mod tests {
     const BTC_E2E_PORT: u16 = 28443;
     const LTC_E2E_PORT: u16 = 29443;
     const BTC_PERSIST_PORT: u16 = 28444;
+    const LTC_PERSIST_PORT: u16 = 29444;
+    const BTC_UI_E2E_PORT: u16 = 28445;
+
+    /// GET `path` on `127.0.0.1:port` and return the HTTP status code (0 on a
+    /// connection/parse failure, so a not-yet-listening explorer just reads as
+    /// "not ready" for the poll loop).
+    fn http_status(port: u16, path: &str) -> u16 {
+        use std::io::{Read, Write};
+        use std::net::TcpStream;
+        let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
+            return 0;
+        };
+        let req = format!("GET {path} HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n");
+        if stream.write_all(req.as_bytes()).is_err() {
+            return 0;
+        }
+        let mut resp = String::new();
+        if stream.read_to_string(&mut resp).is_err() {
+            return 0;
+        }
+        // Status line: "HTTP/1.1 200 OK".
+        resp.split_whitespace()
+            .nth(1)
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0)
+    }
 
     #[test]
     fn bitcoin_regtest_boots_funded_and_faucets() {
@@ -448,32 +537,63 @@ mod tests {
         assert_boots_funded_and_faucets(&net, "LTC");
     }
 
+    /// With the explorer on, a btc-rpc-explorer container boots alongside Bitcoin,
+    /// connects to bitcoind over the docker network, and serves its UI on the
+    /// first explorer host port — advertised in the manifest. It connects a few
+    /// seconds after the chain is ready (a separate container doing server-side
+    /// RPC), so poll rather than assume an immediate 200. Litecoin has no explorer
+    /// (the image is BTC-only), so this covers Bitcoin only. Self-skips w/o Docker.
+    #[test]
+    fn bitcoin_serves_the_btc_rpc_explorer() {
+        if !docker_available() {
+            eprintln!("skipping btc-rpc-explorer e2e: docker unavailable");
+            return;
+        }
+        let net = Localnet::boot_bitcoin_ui("t-bitcoin-ui", BTC_UI_E2E_PORT);
+
+        // The explorer is the first (only) one booted, so it lands on the base
+        // explorer port. Poll for it to finish connecting to bitcoind.
+        let explorer_port = 5100;
+        let mut last = 0;
+        for _ in 0..30 {
+            last = http_status(explorer_port, "/");
+            if last == 200 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        assert_eq!(last, 200, "btc-rpc-explorer should serve its UI");
+
+        // A block page renders regtest data (chain wired through correctly).
+        assert_eq!(http_status(explorer_port, "/block-height/0"), 200);
+
+        // ...and the manifest advertises exactly that URL, so tooling can find it.
+        let manifest = Manifest::read(&manifest_path(net.base())).unwrap();
+        assert_eq!(
+            manifest.chains[0].explorer.as_deref(),
+            Some(format!("http://127.0.0.1:{explorer_port}").as_str())
+        );
+    }
+
     /// The datadir is bind-mounted in persistent mode, so chain state must
     /// survive `down` → `up --resume` and be wiped by `up --reset`. Drives the
     /// orchestrator directly (the `boot_*` harness only does fresh boots) and
-    /// uses block height as the persistence signal. Bitcoin and Litecoin share
-    /// the engine, so one coin covers both. Self-skips without Docker.
-    #[test]
-    fn bitcoin_state_survives_resume_and_resets_on_reset() {
-        if !docker_available() {
-            eprintln!("skipping bitcoin persistence e2e: docker unavailable");
-            return;
-        }
+    /// uses block height as the persistence signal. Run per coin because the two
+    /// images place their datadir via different env vars — the exact per-image
+    /// difference this guards against. Self-skips without Docker.
+    fn assert_state_survives_resume_and_resets_on_reset(kind: &str, port: u16, project: &str) {
         use crate::runtime::orchestrator::{self, UpMode};
 
         let dir = tempfile::TempDir::new_in(".").expect("temp dir under crate root");
         let base = dir.path();
-        let project = "wharfnet-e2e-btc-persist";
-        let chain = "btc-persist";
+        let chain = "persist-1";
         let config = base.join("wharfnet.toml");
         std::fs::write(
             &config,
-            format!(
-                "[[chains]]\nname = \"{chain}\"\nkind = \"bitcoin\"\nport = {BTC_PERSIST_PORT}\n"
-            ),
+            format!("[[chains]]\nname = \"{chain}\"\nkind = \"{kind}\"\nport = {port}\n"),
         )
         .unwrap();
-        let rpc_url = format!("http://{RPC_USER}:{RPC_PASS}@127.0.0.1:{BTC_PERSIST_PORT}");
+        let rpc_url = format!("http://{RPC_USER}:{RPC_PASS}@127.0.0.1:{port}");
 
         // Tear the containers down even if an assertion panics. Declared after
         // `dir` so it drops first — down_in still sees the compose file.
@@ -517,6 +637,32 @@ mod tests {
             block_count(&rpc_url),
             BOOT_BLOCKS,
             "up --reset must discard the persisted chain"
+        );
+    }
+
+    #[test]
+    fn bitcoin_state_survives_resume_and_resets_on_reset() {
+        if !docker_available() {
+            eprintln!("skipping bitcoin persistence e2e: docker unavailable");
+            return;
+        }
+        assert_state_survives_resume_and_resets_on_reset(
+            "bitcoin",
+            BTC_PERSIST_PORT,
+            "wharfnet-e2e-btc-persist",
+        );
+    }
+
+    #[test]
+    fn litecoin_state_survives_resume_and_resets_on_reset() {
+        if !docker_available() {
+            eprintln!("skipping litecoin persistence e2e: docker unavailable");
+            return;
+        }
+        assert_state_survives_resume_and_resets_on_reset(
+            "litecoin",
+            LTC_PERSIST_PORT,
+            "wharfnet-e2e-ltc-persist",
         );
     }
 }

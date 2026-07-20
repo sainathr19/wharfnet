@@ -38,8 +38,15 @@ surface may still change.
     `down` → `up --resume`; `up --reset` wipes it for a clean boot, and a default
     `up` stays ephemeral (datadir in-container, fresh every time) — matching the
     EVM/Solana chains' state model.
-  - **Not yet**: forking (regtest is standalone — `fork_url` is rejected). May
-    land later.
+  - **Explorer** — Bitcoin chains now boot a [btc-rpc-explorer] alongside (on by
+    default, skipped by `up --bare`), the UTXO analogue of the EVM Otterscan
+    explorer. It connects straight to `bitcoind` over RPC — no electrs, indexer,
+    or database — and its URL is advertised in the `status`/manifest. Litecoin
+    ships no explorer: the published image is Bitcoin-only.
+  - **Not yet**: forking (regtest is standalone — `fork_url` is rejected), and a
+    Litecoin explorer (needs a custom multi-coin image). May land later.
+
+[btc-rpc-explorer]: https://github.com/janoside/btc-rpc-explorer
 - **`wharfnet::testkit` — a Rust test-utils API** — the crate is now a library as
   well as a CLI. Add `wharfnet` as a `dev-dependency` and, from an integration
   test, `Localnet::connect()` reads the manifest a running `wharfnet up` wrote and

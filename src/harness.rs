@@ -115,6 +115,17 @@ impl Localnet {
         )
     }
 
+    /// Like [`boot_bitcoin`](Self::boot_bitcoin) but with the explorer on, so a
+    /// btc-rpc-explorer container is booted alongside and published on the first
+    /// explorer host port (`EXPLORER_BASE_PORT`).
+    pub(crate) fn boot_bitcoin_ui(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config_explorer(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"bitcoin\"\nport = {port}\n"),
+            true,
+        )
+    }
+
     /// Boot one litecoind regtest chain named `chain` on host `port`, isolated
     /// under its own temp dir and compose project. Panics on failure.
     pub(crate) fn boot_litecoin(chain: &str, port: u16) -> Localnet {

@@ -261,7 +261,7 @@ impl Engine for EvmEngine {
     fn explorer_target(&self) -> Option<ExplorerTarget> {
         // Anvil implements the Otterscan RPC API (`ots_*`), so Otterscan works
         // against it with no indexer. The browser hits the published host port.
-        Some(ExplorerTarget {
+        Some(ExplorerTarget::Otterscan {
             chain_name: self.name.clone(),
             rpc_host_port: self.host_port,
         })
@@ -403,8 +403,16 @@ mod tests {
         let target = EvmEngine::anvil("anvil-2", 8546, 31338)
             .explorer_target()
             .expect("evm chains support an explorer");
-        assert_eq!(target.chain_name, "anvil-2");
-        assert_eq!(target.rpc_host_port, 8546);
+        match target {
+            ExplorerTarget::Otterscan {
+                chain_name,
+                rpc_host_port,
+            } => {
+                assert_eq!(chain_name, "anvil-2");
+                assert_eq!(rpc_host_port, 8546);
+            }
+            _ => panic!("evm chains use the Otterscan explorer"),
+        }
     }
 
     #[test]
