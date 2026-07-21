@@ -46,7 +46,12 @@ enum Commands {
     /// Tear down the local network and clean up state.
     Down,
     /// Show the status and endpoints of running chains.
-    Status,
+    Status {
+        /// Emit machine-readable JSON instead of the formatted report — for CI
+        /// and scripts. Prints `{ "running": bool, "project", "chains": [...] }`.
+        #[arg(long)]
+        json: bool,
+    },
     /// Stream container logs, optionally for one chain or kind.
     Logs {
         /// Chain kind (`evm`, `starknet`) or a chain name (`anvil-1`). Omit for all.
@@ -294,7 +299,7 @@ fn run(command: Commands) -> anyhow::Result<()> {
             orchestrator::up(mode, !bare, config.as_deref())
         }
         Commands::Down => orchestrator::down(),
-        Commands::Status => orchestrator::status(),
+        Commands::Status { json } => orchestrator::status(json),
         Commands::Logs { chain, follow } => orchestrator::logs(chain.as_deref(), follow),
         Commands::Compose { bare, config } => orchestrator::print_compose(!bare, config.as_deref()),
         Commands::Faucet {
@@ -676,7 +681,7 @@ mod tests {
             config: None,
         })
         .expect("up should succeed");
-        run(Commands::Status).expect("status should succeed");
+        run(Commands::Status { json: false }).expect("status should succeed");
 
         // `mine` exists for every kind.
         let evm = |c| Commands::Evm { command: c };

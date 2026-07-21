@@ -5,6 +5,16 @@ export const categories = ['Solana', 'Starknet', 'EVM', 'Core']
 
 export const entries = [
   {
+    date: 'July 18, 2026',
+    category: 'Core',
+    tag: '#26',
+    title: '`status --json` for CI and scripts',
+    changes: [
+      '`wharfnet status --json` emits a stable JSON document instead of the formatted report: a top-level `running` flag, the `project` name, and a `chains` array carrying the exact manifest schema (RPC URLs, chain IDs, accounts, tokens).',
+      'When nothing is running the output is still valid JSON (`running: false`, empty `chains`), so a pipeline can branch on it without special-casing. The default human-readable output is unchanged.',
+    ],
+  },
+  {
     date: 'July 16, 2026',
     category: 'Solana',
     tag: '#14',

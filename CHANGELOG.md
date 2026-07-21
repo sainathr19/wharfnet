@@ -10,7 +10,7 @@ surface may still change.
 
 ## [Unreleased]
 
-## [0.1.0-alpha.1] - 2026-07-18
+## [0.1.0-alpha.1] - 2026-07-20
 
 ### Added
 
@@ -45,8 +45,13 @@ surface may still change.
     ships no explorer: the published image is Bitcoin-only.
   - **Not yet**: forking (regtest is standalone — `fork_url` is rejected), and a
     Litecoin explorer (needs a custom multi-coin image). May land later.
-
-[btc-rpc-explorer]: https://github.com/janoside/btc-rpc-explorer
+- **`wharfnet status --json`** — machine-readable status output for CI and
+  scripts. Emits a stable JSON document instead of the formatted report: a
+  top-level `running` flag so a script can tell whether a localnet is up, the
+  `project` name, and a `chains` array carrying the exact manifest schema (RPC
+  URLs, chain IDs, accounts, tokens). When nothing is running the output is still
+  valid JSON (`running: false`, empty `chains`), so a pipeline can branch on it
+  without special-casing. The default human-readable output is unchanged.
 - **`wharfnet::testkit` — a Rust test-utils API** — the crate is now a library as
   well as a CLI. Add `wharfnet` as a `dev-dependency` and, from an integration
   test, `Localnet::connect()` reads the manifest a running `wharfnet up` wrote and
@@ -225,3 +230,4 @@ surface may still change.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/compare/v0.1.0-alpha.1...HEAD
 [0.1.0-alpha.1]: https://github.com/sainathr19/wharfnet/releases/tag/v0.1.0-alpha.1
+[btc-rpc-explorer]: https://github.com/janoside/btc-rpc-explorer

@@ -1,8 +1,8 @@
 # wharfnet
 
-[![crates.io](https://img.shields.io/crates/v/wharfnet.svg)](https://crates.io/crates/wharfnet)
+[![ci](https://img.shields.io/github/actions/workflow/status/sainathr19/wharfnet/test.yml?branch=main&label=ci)](https://github.com/sainathr19/wharfnet/actions/workflows/test.yml)
 [![docs](https://img.shields.io/badge/docs-sainathr19.github.io%2Fwharfnet-blue)](https://sainathr19.github.io/wharfnet/)
-[![license](https://img.shields.io/crates/l/wharfnet.svg)](./LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 **One-command localnet for EVM, Solana & Starknet — built-in faucet, pre-deployed test tokens and more.**
 
@@ -43,13 +43,15 @@ Full docs — install, configuration, and per-chain guides (tokens, faucet, chai
 control, forking, explorer, persistence) — live at
 **[sainathr19.github.io/wharfnet](https://sainathr19.github.io/wharfnet/)**:
 
-| Chain                          | Default node    | Guide                                                        |
-| ------------------------------ | --------------- | ------------------------------------------------------------ |
-| **EVM** (`anvil-1`, `anvil-2`) | Anvil           | [/evm](https://sainathr19.github.io/wharfnet/evm)           |
-| **Starknet** (`starknet-1`)    | starknet-devnet | [/starknet](https://sainathr19.github.io/wharfnet/starknet) |
-| **Solana** (`solana-1`)        | surfpool        | [/solana](https://sainathr19.github.io/wharfnet/solana)     |
-| **Bitcoin** (`bitcoin-1`)      | bitcoind (regtest)  | see [Configuration](#configuration) |
-| **Litecoin** (`litecoin-1`)    | litecoind (regtest) | see [Configuration](#configuration) |
+All the chains are grouped under **[Chains](https://sainathr19.github.io/wharfnet/chains/overview)**, one guide each:
+
+| Chain                          | Default node        | Guide                                                                    |
+| ------------------------------ | ------------------- | ------------------------------------------------------------------------ |
+| **EVM** (`anvil-1`, `anvil-2`) | Anvil               | [/chains/evm](https://sainathr19.github.io/wharfnet/chains/evm)           |
+| **Starknet** (`starknet-1`)    | starknet-devnet     | [/chains/starknet](https://sainathr19.github.io/wharfnet/chains/starknet) |
+| **Solana** (`solana-1`)        | surfpool            | [/chains/solana](https://sainathr19.github.io/wharfnet/chains/solana)     |
+| **Bitcoin** (`bitcoin-1`)      | bitcoind (regtest)  | see [Configuration](#configuration)                                       |
+| **Litecoin** (`litecoin-1`)    | litecoind (regtest) | see [Configuration](#configuration)                                       |
 
 The site is a [Nextra](https://nextra.site) app under [`landing/`](landing/),
 deployed to GitHub Pages on every push to `main` (source pages live in
@@ -94,6 +96,9 @@ wharfnet up --reset
 
 # check what's running
 wharfnet status
+
+# machine-readable status for CI and scripts (pipe to jq, etc.)
+wharfnet status --json
 
 # fund an address with native coin + every bundled token, on all EVM chains
 wharfnet faucet evm 0xabc... 100

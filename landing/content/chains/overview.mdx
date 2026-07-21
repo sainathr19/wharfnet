@@ -1,0 +1,35 @@
+---
+title: Chains overview
+---
+
+# Chains
+
+`wharfnet up` boots every supported chain side by side behind one config, one
+manifest, and one `status`. Each runs from a pinned Docker image with funded dev
+accounts and — where the VM has them — test tokens at fixed addresses and a
+built-in block explorer. The same verbs (`up`, `faucet`, per-chain control) work
+the same way across all of them.
+
+| Chain | Default node | Default RPC | Test tokens | Explorer | Forking |
+| ----- | ------------ | ----------- | ----------- | -------- | ------- |
+| [**EVM**](/chains/evm) | Anvil | `:8545`, `:8546` | USDC, WBTC, FEE, REB, NRT (+ Multicall3, Permit2, CREATE2) | Otterscan | ✓ (`fork_url` + `fork_block`) |
+| [**Starknet**](/chains/starknet) | starknet-devnet | `:5050` | USDC, WBTC, FEE, REB | built-in (`--ui`) | ✓ (`fork_url` + `fork_block`) |
+| [**Solana**](/chains/solana) | surfpool | `:8899` (+ `:8900` WS) | USDC, WBTC | Studio | ✓ (`fork_url`) |
+
+Every chain also supports **opt-in persistence** — `wharfnet up --resume` keeps
+balances, transactions, and deployments across restarts, and `--reset` discards a
+saved session. See [State & persistence](/getting-started#resuming-a-session) for
+the shared model.
+
+## Per-chain guides
+
+- [**EVM**](/chains/evm) — Anvil, test tokens and canonical contracts at fixed
+  addresses, chain control (mine, time-travel, snapshot/revert, impersonate),
+  forking, and the Otterscan explorer.
+- [**Starknet**](/chains/starknet) — starknet-devnet, Cairo test tokens, chain
+  control, forking, and the built-in explorer.
+- [**Solana**](/chains/solana) — surfpool, SPL test tokens, WebSocket RPC, slot /
+  clock control, forking, and the Studio explorer.
+
+Adding a chain kind is a matter of implementing the `Engine` trait — see
+[Contributing](/contributing#adding-a-chain-kind-or-capability).
