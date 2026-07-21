@@ -29,7 +29,7 @@ curl -s -X POST http://127.0.0.1:8899 \
 Each Solana chain comes with **deterministic funded dev accounts** — three
 keypairs derived from documented seeds (`sha256("wharfnet-solana-dev-<i>")` →
 ed25519), so they're identical on every boot and regenerable by anyone (the
-Solana analogue of Anvil's fixed test mnemonic). They're well-known throwaway
+Solana analogue of Anvil's fixed test mnemonic). They are well-known development
 keys, funded with 10,000 SOL each at boot and recorded in the manifest with their
 base58 secrets, so tooling can sign as them. Readiness is checked against
 surfpool's `getHealth` RPC.
@@ -38,9 +38,9 @@ surfpool's `getHealth` RPC.
 
 The **WebSocket RPC** is published on the HTTP RPC port + 1 (`solana-1` →
 `ws://127.0.0.1:8900`), following Solana's own convention, so clients like
-`@solana/web3.js` that derive the WS URL from the RPC URL just work —
-subscriptions (`slotSubscribe`, `logsSubscribe`) and `confirmTransaction` all run
-against the host. It's always served (not gated by `--bare`) and recorded in the
+`@solana/web3.js` that derive the WS URL from the RPC URL connect without extra
+configuration — subscriptions (`slotSubscribe`, `logsSubscribe`) and
+`confirmTransaction` all run against the host. It's always served (not gated by `--bare`) and recorded in the
 manifest.
 
 ## Test tokens
@@ -61,8 +61,8 @@ surfpool's `surfnet_setAccount` cheat and funds the dev accounts with
 `sha256("wharfnet-solana-mint-<symbol>")`) and their mint authority is dev account 0.
 
 <Callout type="info">
-  "Weird" Token-2022 test tokens (transfer-fee, interest-bearing) are planned but
-  not yet available — surfpool's cheatcodes don't currently create queryable
+  Non-standard Token-2022 test tokens (transfer-fee, interest-bearing) are planned
+  but not yet available — surfpool's cheatcodes do not currently create queryable
   Token-2022 accounts.
 </Callout>
 

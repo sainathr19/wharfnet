@@ -69,7 +69,7 @@ well-known — sign with them via `createWalletClient` for writes.
 import { Connection, PublicKey } from '@solana/web3.js'
 
 // web3.js derives the WebSocket URL (port + 1) from the RPC URL automatically,
-// so subscriptions and confirmTransaction just work.
+// so subscriptions and confirmTransaction need no extra configuration.
 const connection = new Connection('http://127.0.0.1:8899', 'confirmed')
 
 // a funded dev account from `wharfnet status`
