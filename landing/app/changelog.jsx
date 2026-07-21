@@ -7,6 +7,7 @@ const CATEGORY_COLOR = {
   Solana: '#9945ff',
   Starknet: '#ec4899',
   EVM: '#3b82f6',
+  UTXO: '#f7931a',
   Core: '#9ca3af'
 }
 

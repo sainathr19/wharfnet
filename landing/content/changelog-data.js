@@ -1,9 +1,39 @@
 // Changelog timeline data — newest first. Dates are the commit dates the
 // feature landed; `tag` is the PR it shipped in (optional). Descriptions may
 // use `backticks` for inline code, rendered as code chips.
-export const categories = ['Solana', 'Starknet', 'EVM', 'Core']
+export const categories = ['Solana', 'Starknet', 'EVM', 'UTXO', 'Core']
 
 export const entries = [
+  {
+    date: 'July 20, 2026',
+    category: 'UTXO',
+    tag: '#21',
+    title: 'Bitcoin & Litecoin chains',
+    changes: [
+      'Bitcoin (`bitcoin-1`, `:18443`) and Litecoin (`litecoin-1`, `:19443`) now boot **by default**, each running its Core daemon in **regtest** from a pinned image (`bitcoin/bitcoin:29`, `uphold/litecoin-core:0.21`). Litecoin is a Bitcoin fork with an identical JSON-RPC, so both are served by one `UtxoEngine`; selectable via `kind = "bitcoin"` / `"litecoin"` in `wharfnet.toml`.',
+      'At boot each chain creates a `wharfnet` wallet and mines 101 blocks to it, so a coinbase matures and the address holds a spendable 50-coin balance — the UTXO analogue of the pre-funded EVM/Solana dev accounts. The RPC is published with fixed dev credentials (`wharfnet:wharfnet`) embedded in the manifest.',
+    ],
+  },
+  {
+    date: 'July 20, 2026',
+    category: 'UTXO',
+    tag: '#21',
+    title: 'Bitcoin & Litecoin faucet & chain control',
+    changes: [
+      'The unified `faucet` funds native coin from the boot wallet and mines one block to confirm; `--raw` treats the amount as satoshis. UTXO chains carry no test tokens, so only the native coin (`BTC`/`LTC`) is funded.',
+      '`wharfnet bitcoin mine <n>` / `wharfnet litecoin mine <n>` produce blocks on demand (regtest `generatetoaddress`). Regtest is standalone, so there is no time-travel, snapshot, or forking analogue — `fork_url` is rejected on load.',
+    ],
+  },
+  {
+    date: 'July 20, 2026',
+    category: 'UTXO',
+    tag: '#21',
+    title: 'Bitcoin & Litecoin persistence & explorer',
+    changes: [
+      '`up --resume` bind-mounts a per-chain datadir under `.wharfnet/state/`, so the whole chain (blocks, wallets, faucet sends) survives `down` → `up --resume`; `up --reset` wipes it, and a plain `up` stays ephemeral.',
+      'Bitcoin chains boot a **btc-rpc-explorer** by default (`up --bare` to skip) — the UTXO analogue of Otterscan, talking straight to `bitcoind` over RPC with no indexer. A Litecoin explorer is planned (the published image is Bitcoin-only).',
+    ],
+  },
   {
     date: 'July 18, 2026',
     category: 'Core',

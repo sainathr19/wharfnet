@@ -1,0 +1,129 @@
+---
+title: Bitcoin
+---
+
+import { Callout } from 'nextra/components'
+
+# Bitcoin
+
+`wharfnet up` boots a [`bitcoind`](https://github.com/bitcoin/bitcoin) chain by
+default (`bitcoin-1` on `:18443`), alongside the EVM, Starknet, and Solana chains
+— one command, one manifest, one `status`. It runs Bitcoin Core 29 (the official
+`bitcoin/bitcoin:29` image) in **regtest**: a standalone network where blocks are
+produced on demand rather than on a fixed schedule, so the chain is instant and
+fully deterministic. To run without it, write a `wharfnet.toml` that omits the
+Bitcoin chain (a config replaces the defaults).
+
+```sh
+wharfnet up --bare
+# JSON-RPC on :18443 — bitcoind always requires auth; the dev creds are wharfnet:wharfnet
+curl -s --user wharfnet:wharfnet -X POST http://127.0.0.1:18443 \
+  -d '{"jsonrpc":"1.0","id":1,"method":"getblockchaininfo","params":[]}'  # -> {"chain":"regtest",...}
+```
+
+<Callout type="info">
+  Writing Rust tests? Read the endpoints and the funded account from a running
+  localnet with [`wharfnet::testkit`](/examples). UTXO chains have no per-kind
+  accessor, so select by name: `net.chain("bitcoin-1")?.rpc_url()` (the URL
+  already embeds the dev creds) and `.account(0)` (the boot wallet address). There
+  are no test tokens, so `token`/`token_abi` don't apply — spend over RPC with a
+  Bitcoin client such as `bitcoinjs-lib` or `bitcoincore-rpc`.
+</Callout>
+
+The RPC is served at `http://wharfnet:wharfnet@127.0.0.1:18443` — bitcoind answers
+even `getblockchaininfo` only with credentials, so the dev user/password
+(`wharfnet:wharfnet`) are baked into the daemon flags and embedded in the manifest
+URL. Readiness is checked against an authed `getblockchaininfo`.
+
+## Funded boot wallet
+
+Regtest starts with an empty chain and no spendable coins, so on first boot
+wharfnet creates a node wallet named `wharfnet` and mines **101 blocks** to a
+fresh address in it. Coinbase maturity in regtest is 100 blocks, so 101 blocks
+leaves exactly one mature coinbase — **50 BTC** — spendable straight away. That
+address and balance are recorded in the manifest as the chain's funded account
+(the UTXO analogue of Anvil's pre-funded keys).
+
+<Callout type="info">
+  The key never leaves the node. Regtest descriptor wallets don't export private
+  keys, so the manifest records the account as *"(spendable via node wallet
+  'wharfnet')"* rather than a raw secret — the faucet and chain control spend
+  through the node's own wallet.
+</Callout>
+
+## Test tokens
+
+Bitcoin has **no test tokens** — the UTXO model has no smart-contract token
+standard, so wharfnet funds only the native coin (**BTC**). There are no baked
+token addresses, infra contracts, or ABIs to load; the chain boots with just the
+funded coinbase described above.
+
+## Faucet
+
+The unified `faucet` command works on Bitcoin chains too:
+
+```sh
+# native BTC, on every Bitcoin chain
+wharfnet faucet bitcoin bcrt1q…xyz 5
+
+# a specific chain, native coin named explicitly
+wharfnet faucet bitcoin-1 bcrt1q…xyz 2.5 --token BTC
+
+# exact base units (satoshis) instead of decimal coins
+wharfnet faucet bitcoin-1 bcrt1q…xyz 150000000 --raw
+```
+
+Funding runs `sendtoaddress` from the boot wallet, then mines one block to
+confirm the payment. Amounts are decimal coins (8 decimals) or exact satoshis
+with `--raw`. `--token` may be `BTC` or omitted — there are no other tokens, so
+any other value errors. Funding is additive: each top-up adds another confirmed
+UTXO to the address.
+
+## Chain control
+
+Regtest produces blocks only on demand, so **`mine` is the whole control
+surface** — there's no time-travel, snapshot/revert, or impersonation (those are
+EVM/Starknet features that bitcoind has no equivalent for). The verb lives under
+`wharfnet bitcoin` and takes a `--chain` selector (`bitcoin` for every Bitcoin
+chain, or a name like `bitcoin-1`; defaults to `bitcoin`):
+
+```sh
+wharfnet bitcoin mine 6      # mine 6 blocks to the boot wallet, e.g. to confirm txs
+```
+
+`mine` calls `generatetoaddress` against the boot wallet, so the block rewards
+accrue to the funded account — handy for advancing confirmations or maturing more
+coinbase to spend.
+
+## Forking
+
+**Forking is not supported for UTXO chains.** bitcoind regtest has no
+fork-a-live-network mode, so setting `fork_url` (or `fork_block`) on a
+`kind = "bitcoin"` chain is rejected on load. Use a fresh regtest chain and fund
+what you need with the faucet.
+
+## Block explorer
+
+Each Bitcoin chain serves a bundled
+[**btc-rpc-explorer**](https://github.com/janoside/btc-rpc-explorer) (pinned
+`getumbrel/btc-rpc-explorer:v3.4.0`) — the UTXO analogue of Otterscan. Unlike
+Otterscan, it makes its RPC calls **server-side**, so it reaches bitcoind over the
+docker network via the chain's service name and internal RPC port (no browser-side
+CORS). wharfnet publishes its UI on a host port assigned from `5100` upward, so in
+the default topology it lands on `:5102`; the exact URL is recorded in the
+manifest and printed by `status`:
+
+| Chain     | RPC                     | Explorer                 |
+| --------- | ----------------------- | ------------------------ |
+| bitcoin-1 | `http://127.0.0.1:18443` | `http://127.0.0.1:5102` |
+
+Pass `--bare` to skip it.
+
+## Persistence
+
+Bitcoin chains persist across `up --resume` / `up --reset` like the other chains.
+The **entire bitcoind datadir is the session** — wallet, chainstate, and blocks —
+mounted per chain under `.wharfnet/state/`. `--resume` keeps it (boot is
+idempotent: it loads the existing wallet instead of recreating it and mines only
+the shortfall back to 101 blocks), and `--reset` wipes it for a clean chain. See
+[Resuming a session](/getting-started#resuming-a-session) for the shared model.

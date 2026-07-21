@@ -6,7 +6,7 @@ title: Chains overview
 
 `wharfnet up` boots every supported chain side by side behind one config, one
 manifest, and one `status`. Each runs from a pinned Docker image with funded dev
-accounts and — where the VM has them — test tokens at fixed addresses and a
+accounts and — where the VM supports them — test tokens at fixed addresses and a
 built-in block explorer. The same verbs (`up`, `faucet`, per-chain control) work
 the same way across all of them.
 
@@ -15,6 +15,8 @@ the same way across all of them.
 | [**EVM**](/chains/evm) | Anvil | `:8545`, `:8546` | USDC, WBTC, FEE, REB, NRT (+ Multicall3, Permit2, CREATE2) | Otterscan | ✓ (`fork_url` + `fork_block`) |
 | [**Starknet**](/chains/starknet) | starknet-devnet | `:5050` | USDC, WBTC, FEE, REB | built-in (`--ui`) | ✓ (`fork_url` + `fork_block`) |
 | [**Solana**](/chains/solana) | surfpool | `:8899` (+ `:8900` WS) | USDC, WBTC | Studio | ✓ (`fork_url`) |
+| [**Bitcoin**](/chains/bitcoin) | bitcoind (regtest) | `:18443` | — (native BTC only) | btc-rpc-explorer | — |
+| [**Litecoin**](/chains/litecoin) | litecoind (regtest) | `:19443` | — (native LTC only) | planned (TODO) | — |
 
 Every chain also supports **opt-in persistence** — `wharfnet up --resume` keeps
 balances, transactions, and deployments across restarts, and `--reset` discards a
@@ -30,6 +32,11 @@ the shared model.
   control, forking, and the built-in explorer.
 - [**Solana**](/chains/solana) — surfpool, SPL test tokens, WebSocket RPC, slot /
   clock control, forking, and the Studio explorer.
+- [**Bitcoin**](/chains/bitcoin) — bitcoind regtest, a funded coinbase wallet,
+  native-BTC faucet, on-demand block mining, and the btc-rpc-explorer.
+- [**Litecoin**](/chains/litecoin) — litecoind regtest (a Bitcoin Core fork), a
+  funded coinbase wallet, native-LTC faucet, and on-demand block mining; bundled
+  explorer planned (TODO).
 
 Adding a chain kind is a matter of implementing the `Engine` trait — see
 [Contributing](/contributing#adding-a-chain-kind-or-capability).
