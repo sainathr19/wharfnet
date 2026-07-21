@@ -1,0 +1,17 @@
+  {{NAME}}:
+    image: {{IMAGE}}
+    # The image entrypoint runs bitcoind/litecoind and, when the first arg starts
+    # with '-', prepends the daemon itself — so these are daemon flags. Regtest is
+    # a standalone, on-demand-mined chain (blocks come from `generatetoaddress`,
+    # not a timer). RPC is bound on all interfaces with fixed dev credentials so
+    # the host can reach it; `-fallbackfee` lets the wallet build faucet sends
+    # without fee estimation. In persistent mode the image's datadir env var
+    # (set below) points the daemon at a mounted per-chain datadir so the chain
+    # survives `down` → `up --resume`; ephemeral mode keeps the datadir
+    # in-container, so every boot is fresh. The datadir is set via the env var,
+    # not a `-datadir` flag: both entrypoints append their own `-datadir=$..._DATA`
+    # after these args, which would override the flag.
+    command: ["-regtest", "-server", "-txindex", "-fallbackfee=0.0002", "-rpcuser=wharfnet", "-rpcpassword=wharfnet", "-rpcbind=0.0.0.0", "-rpcallowip=0.0.0.0/0", "-rpcport={{PORT}}", "-printtoconsole"]{{ENVIRONMENT}}
+    ports:
+      - "{{HOST_PORT}}:{{PORT}}"{{VOLUMES}}
+    restart: unless-stopped

@@ -106,6 +106,35 @@ impl Localnet {
         )
     }
 
+    /// Boot one bitcoind regtest chain named `chain` on host `port`, isolated
+    /// under its own temp dir and compose project. Panics on failure.
+    pub(crate) fn boot_bitcoin(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"bitcoin\"\nport = {port}\n"),
+        )
+    }
+
+    /// Like [`boot_bitcoin`](Self::boot_bitcoin) but with the explorer on, so a
+    /// btc-rpc-explorer container is booted alongside and published on the first
+    /// explorer host port (`EXPLORER_BASE_PORT`).
+    pub(crate) fn boot_bitcoin_ui(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config_explorer(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"bitcoin\"\nport = {port}\n"),
+            true,
+        )
+    }
+
+    /// Boot one litecoind regtest chain named `chain` on host `port`, isolated
+    /// under its own temp dir and compose project. Panics on failure.
+    pub(crate) fn boot_litecoin(chain: &str, port: u16) -> Localnet {
+        Self::boot_with_config(
+            chain,
+            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"litecoin\"\nport = {port}\n"),
+        )
+    }
+
     /// Boot a `starknet-devnet` chain that forks a live Starknet RPC at
     /// `fork_url`. Panics on failure.
     pub(crate) fn boot_starknet_fork(chain: &str, port: u16, fork_url: &str) -> Localnet {

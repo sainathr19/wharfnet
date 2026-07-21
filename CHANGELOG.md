@@ -14,6 +14,37 @@ surface may still change.
 
 ### Added
 
+- **Bitcoin & Litecoin chains** — wharfnet can now boot Bitcoin (`bitcoin`) and
+  Litecoin (`litecoin`) chains, each running its Core daemon in **regtest** from a
+  pinned image (`bitcoin/bitcoin:29`, `uphold/litecoin-core:0.21`). Litecoin is a
+  Bitcoin fork with an identical JSON-RPC, so both are served by one `UtxoEngine`.
+  At boot each chain creates a `wharfnet` wallet and mines 101 blocks to it, so a
+  coinbase matures and the address holds a spendable 50-coin balance (advertised
+  in the `status`/manifest, the UTXO analogue of the pre-funded EVM/Solana dev
+  accounts). The RPC is published with fixed dev credentials (`wharfnet:wharfnet`)
+  embedded in the manifest `rpc` URL. Both are on by default — `wharfnet up` now
+  boots `bitcoin-1` (:18443) and `litecoin-1` (:19443) alongside the EVM, Starknet,
+  and Solana chains — and can be dropped or reconfigured via `wharfnet.toml`.
+
+  - **Faucet** — `wharfnet faucet bitcoin-1 <address> <amount>` sends native coin
+    from the boot wallet and mines one block to confirm; `--raw` treats the amount
+    as satoshis. UTXO chains carry no test tokens, so only the native coin is
+    funded (`--token BTC`/`LTC`, or omit).
+  - **Chain control** — `wharfnet bitcoin mine <n>` / `wharfnet litecoin mine <n>`
+    produce blocks on demand (regtest `generatetoaddress`). There is no
+    time-travel or snapshot analogue for a UTXO chain.
+  - **Persistence** — `up --resume` bind-mounts a per-chain datadir under
+    `.wharfnet/state/` so the whole chain (blocks, wallets, faucet sends) survives
+    `down` → `up --resume`; `up --reset` wipes it for a clean boot, and a default
+    `up` stays ephemeral (datadir in-container, fresh every time) — matching the
+    EVM/Solana chains' state model.
+  - **Explorer** — Bitcoin chains now boot a [btc-rpc-explorer] alongside (on by
+    default, skipped by `up --bare`), the UTXO analogue of the EVM Otterscan
+    explorer. It connects straight to `bitcoind` over RPC — no electrs, indexer,
+    or database — and its URL is advertised in the `status`/manifest. Litecoin
+    ships no explorer: the published image is Bitcoin-only.
+  - **Not yet**: forking (regtest is standalone — `fork_url` is rejected), and a
+    Litecoin explorer (needs a custom multi-coin image). May land later.
 - **`wharfnet status --json`** — machine-readable status output for CI and
   scripts. Emits a stable JSON document instead of the formatted report: a
   top-level `running` flag so a script can tell whether a localnet is up, the
@@ -21,7 +52,6 @@ surface may still change.
   URLs, chain IDs, accounts, tokens). When nothing is running the output is still
   valid JSON (`running: false`, empty `chains`), so a pipeline can branch on it
   without special-casing. The default human-readable output is unchanged.
-
 - **`wharfnet::testkit` — a Rust test-utils API** — the crate is now a library as
   well as a CLI. Add `wharfnet` as a `dev-dependency` and, from an integration
   test, `Localnet::connect()` reads the manifest a running `wharfnet up` wrote and
@@ -200,3 +230,4 @@ surface may still change.
 
 [Unreleased]: https://github.com/sainathr19/wharfnet/compare/v0.1.0-alpha.1...HEAD
 [0.1.0-alpha.1]: https://github.com/sainathr19/wharfnet/releases/tag/v0.1.0-alpha.1
+[btc-rpc-explorer]: https://github.com/janoside/btc-rpc-explorer

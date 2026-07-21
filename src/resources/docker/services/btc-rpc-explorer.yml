@@ -1,0 +1,20 @@
+  {{NAME}}:
+    image: {{IMAGE}}
+    # btc-rpc-explorer makes its RPC calls server-side, so it reaches bitcoind
+    # over the docker network via the chain's service name + internal RPC port
+    # (not a published host port, unlike the host-side Otterscan frontend). The
+    # login wall is disabled (empty basic-auth password) for a frictionless local
+    # explorer, and exchange-rate lookups are off (no outbound network on a
+    # regtest dev box). Its own web UI listens on 3002, published on the host.
+    environment:
+      - "BTCEXP_HOST=0.0.0.0"
+      - "BTCEXP_PORT=3002"
+      - "BTCEXP_BITCOIND_HOST={{RPC_SERVICE}}"
+      - "BTCEXP_BITCOIND_PORT={{RPC_PORT}}"
+      - "BTCEXP_BITCOIND_USER={{RPC_USER}}"
+      - "BTCEXP_BITCOIND_PASS={{RPC_PASS}}"
+      - "BTCEXP_BASIC_AUTH_PASSWORD="
+      - "BTCEXP_NO_RATES=true"
+    ports:
+      - "{{HOST_PORT}}:3002"
+    restart: unless-stopped

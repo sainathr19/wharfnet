@@ -16,12 +16,13 @@ use std::time::{Duration, Instant};
 
 use super::config::{self, Config};
 use super::docker;
-use super::engine::{Engine, HealthProbe, StateMode};
+use super::engine::{Engine, ExplorerTarget, HealthProbe, StateMode};
 use super::manifest::{ChainEntry, Manifest};
 use super::ui;
 use crate::evm::engine::EvmEngine;
 use crate::solana::engine::SolanaEngine;
 use crate::starknet::engine::StarknetEngine;
+use crate::utxo::engine::{BITCOIN, LITECOIN, UtxoEngine};
 use serde::Serialize;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
@@ -33,6 +34,13 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const OTTERSCAN_IMAGE: &str = "otterscan/otterscan:v2.11.0";
 /// Compose service template for an Otterscan explorer.
 const OTTERSCAN_SERVICE_TEMPLATE: &str = include_str!("../resources/docker/services/otterscan.yml");
+/// Pinned btc-rpc-explorer image — the UTXO analogue of Otterscan. It connects
+/// straight to bitcoind over RPC (no electrs/indexer/DB). BTC-only, so it backs
+/// Bitcoin chains but not Litecoin.
+const BTC_RPC_EXPLORER_IMAGE: &str = "getumbrel/btc-rpc-explorer:v3.4.0";
+/// Compose service template for a btc-rpc-explorer.
+const BTC_RPC_EXPLORER_TEMPLATE: &str =
+    include_str!("../resources/docker/services/btc-rpc-explorer.yml");
 /// First host port for explorers; each subsequent chain's explorer takes the next.
 const EXPLORER_BASE_PORT: u16 = 5100;
 
@@ -114,20 +122,42 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
             }
             Box::new(engine)
         }
+        // Bitcoin and Litecoin are the same daemon family (Litecoin is a Bitcoin
+        // fork with an identical RPC), so one engine serves both — only the coin
+        // params differ. Regtest, no fork (config rejects fork_url for them).
+        "bitcoin" => Box::new(UtxoEngine::new(BITCOIN, &c.name, c.port)),
+        "litecoin" => Box::new(UtxoEngine::new(LITECOIN, &c.name, c.port)),
         other => unreachable!("validate() rejects unsupported kind '{other}'"),
     }
 }
 
-/// A resolved Otterscan explorer for one chain: its service name, the host port
-/// it's published on, the generated frontend config, and the URL to open.
+/// A resolved explorer for one chain: its service name, the host port it's
+/// published on, the URL to open, and the flavor-specific render inputs.
 struct ExplorerService {
     service_name: String,
     chain_name: String,
     host_port: u16,
-    config_rel_path: String,
-    config_file: String,
-    config_json: String,
     url: String,
+    render: ExplorerRender,
+}
+
+/// Flavor-specific inputs for rendering an explorer's compose service.
+enum ExplorerRender {
+    /// Otterscan: a static frontend configured by a mounted `config.json` the
+    /// browser reads before calling the chain RPC itself.
+    Otterscan {
+        config_file: String,
+        config_rel_path: String,
+        config_json: String,
+    },
+    /// btc-rpc-explorer: configured entirely via env vars (server-side RPC), so
+    /// there is no mounted config file to stage.
+    BtcRpc {
+        rpc_service: String,
+        rpc_port: u16,
+        rpc_user: String,
+        rpc_pass: String,
+    },
 }
 
 /// Build one explorer per explorer-capable chain, assigning host ports from
@@ -141,23 +171,49 @@ fn explorer_services(engines: &[Box<dyn Engine>]) -> Vec<ExplorerService> {
         };
         let host_port = port;
         port += 1;
-        let config_file = format!("otterscan-{}.json", target.chain_name);
-        // The browser (on the host) hits both the chain RPC and the explorer's
-        // own bundled assets, so both URLs use published host ports.
-        let config_json = format!(
-            "{{\n  \"erigonURL\": \"http://127.0.0.1:{rpc}\",\n  \"assetsURLPrefix\": \"http://127.0.0.1:{exp}\"\n}}\n",
-            rpc = target.rpc_host_port,
-            exp = host_port,
-        );
-        services.push(ExplorerService {
-            service_name: format!("explorer-{}", target.chain_name),
-            chain_name: target.chain_name,
-            host_port,
-            config_rel_path: format!("state/{config_file}"),
-            config_file,
-            config_json,
-            url: format!("http://127.0.0.1:{host_port}"),
-        });
+        let svc = match target {
+            ExplorerTarget::Otterscan {
+                chain_name,
+                rpc_host_port,
+            } => {
+                let config_file = format!("otterscan-{chain_name}.json");
+                // The browser (on the host) hits both the chain RPC and the
+                // explorer's own bundled assets, so both URLs use host ports.
+                let config_json = format!(
+                    "{{\n  \"erigonURL\": \"http://127.0.0.1:{rpc_host_port}\",\n  \"assetsURLPrefix\": \"http://127.0.0.1:{host_port}\"\n}}\n",
+                );
+                ExplorerService {
+                    service_name: format!("explorer-{chain_name}"),
+                    host_port,
+                    url: format!("http://127.0.0.1:{host_port}"),
+                    render: ExplorerRender::Otterscan {
+                        config_rel_path: format!("state/{config_file}"),
+                        config_file,
+                        config_json,
+                    },
+                    chain_name,
+                }
+            }
+            ExplorerTarget::BtcRpc {
+                chain_name,
+                rpc_service,
+                rpc_port,
+                rpc_user,
+                rpc_pass,
+            } => ExplorerService {
+                service_name: format!("explorer-{chain_name}"),
+                host_port,
+                url: format!("http://127.0.0.1:{host_port}"),
+                render: ExplorerRender::BtcRpc {
+                    rpc_service,
+                    rpc_port,
+                    rpc_user,
+                    rpc_pass,
+                },
+                chain_name,
+            },
+        };
+        services.push(svc);
     }
     services
 }
@@ -191,11 +247,26 @@ fn check_ports(engines: &[Box<dyn Engine>], explorers: &[ExplorerService]) -> Re
 }
 
 fn render_explorer_service(svc: &ExplorerService) -> String {
-    OTTERSCAN_SERVICE_TEMPLATE
-        .replace("{{NAME}}", &svc.service_name)
-        .replace("{{IMAGE}}", OTTERSCAN_IMAGE)
-        .replace("{{HOST_PORT}}", &svc.host_port.to_string())
-        .replace("{{CONFIG_FILE}}", &svc.config_file)
+    match &svc.render {
+        ExplorerRender::Otterscan { config_file, .. } => OTTERSCAN_SERVICE_TEMPLATE
+            .replace("{{NAME}}", &svc.service_name)
+            .replace("{{IMAGE}}", OTTERSCAN_IMAGE)
+            .replace("{{HOST_PORT}}", &svc.host_port.to_string())
+            .replace("{{CONFIG_FILE}}", config_file),
+        ExplorerRender::BtcRpc {
+            rpc_service,
+            rpc_port,
+            rpc_user,
+            rpc_pass,
+        } => BTC_RPC_EXPLORER_TEMPLATE
+            .replace("{{NAME}}", &svc.service_name)
+            .replace("{{IMAGE}}", BTC_RPC_EXPLORER_IMAGE)
+            .replace("{{HOST_PORT}}", &svc.host_port.to_string())
+            .replace("{{RPC_SERVICE}}", rpc_service)
+            .replace("{{RPC_PORT}}", &rpc_port.to_string())
+            .replace("{{RPC_USER}}", rpc_user)
+            .replace("{{RPC_PASS}}", rpc_pass),
+    }
 }
 
 fn render_compose(
@@ -217,14 +288,23 @@ fn render_compose(
 }
 
 /// Write each explorer's generated `config.json` under the state dir so the
-/// compose file can mount it into the Otterscan container.
+/// compose file can mount it into the container. Only Otterscan needs one;
+/// btc-rpc-explorer is configured via env vars, so it stages nothing.
 fn stage_explorer_configs(base: &Path, explorers: &[ExplorerService]) -> Result<()> {
     for svc in explorers {
-        let dest = base.join(&svc.config_rel_path);
+        let ExplorerRender::Otterscan {
+            config_rel_path,
+            config_json,
+            ..
+        } = &svc.render
+        else {
+            continue;
+        };
+        let dest = base.join(config_rel_path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&dest, &svc.config_json)?;
+        fs::write(&dest, config_json)?;
     }
     Ok(())
 }
@@ -250,29 +330,50 @@ fn stage_files(base: &Path, engines: &[Box<dyn Engine>], mode: StateMode) -> Res
     Ok(())
 }
 
-/// Delete every saved per-chain session snapshot under the state dir. Used by
+/// Delete every saved per-chain session under the state dir. Used by
 /// `up --reset` to guarantee a clean slate. Missing dir / files are fine.
-fn clear_sessions(base: &Path) -> Result<()> {
-    let state = base.join("state");
-    let Ok(entries) = fs::read_dir(&state) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        if is_session_file(&entry.file_name().to_string_lossy()) {
-            let _ = fs::remove_file(entry.path());
+fn clear_sessions(base: &Path, engines: &[Box<dyn Engine>]) -> Result<()> {
+    // Anvil/starknet-devnet/surfpool dump `session-*` snapshot files into state/.
+    if let Ok(entries) = fs::read_dir(base.join("state")) {
+        for entry in entries.flatten() {
+            if is_session_file(&entry.file_name().to_string_lossy()) {
+                let _ = fs::remove_file(entry.path());
+            }
         }
+    }
+    // Engines with a directory-shaped session (a UTXO datadir) name it explicitly.
+    for path in engine_session_paths(base, engines) {
+        let _ = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
     }
     Ok(())
 }
 
-/// Whether any saved per-chain session snapshot exists under the state dir.
-fn has_saved_session(base: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(base.join("state")) else {
-        return false;
-    };
-    entries
-        .flatten()
-        .any(|e| is_session_file(&e.file_name().to_string_lossy()))
+/// Whether any saved per-chain session exists under the state dir.
+fn has_saved_session(base: &Path, engines: &[Box<dyn Engine>]) -> bool {
+    let file_session = fs::read_dir(base.join("state"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| is_session_file(&e.file_name().to_string_lossy()))
+        })
+        .unwrap_or(false);
+    file_session
+        || engine_session_paths(base, engines)
+            .into_iter()
+            .any(|p| p.exists())
+}
+
+/// Absolute paths of every engine-declared session file/dir under the state dir.
+fn engine_session_paths(base: &Path, engines: &[Box<dyn Engine>]) -> Vec<std::path::PathBuf> {
+    engines
+        .iter()
+        .flat_map(|e| e.session_paths())
+        .map(|rel| base.join(rel))
+        .collect()
 }
 
 fn is_session_file(name: &str) -> bool {
@@ -344,10 +445,10 @@ pub(crate) fn up_in(
     check_ports(&engines, &explorers)?;
 
     if mode == UpMode::Reset {
-        clear_sessions(base)?;
+        clear_sessions(base, &engines)?;
     }
     // Note whether we're resuming before staging seeds any missing sessions.
-    let resuming = mode == UpMode::Resume && has_saved_session(base);
+    let resuming = mode == UpMode::Resume && has_saved_session(base, &engines);
 
     fs::create_dir_all(base)?;
     fs::write(
@@ -465,7 +566,7 @@ pub(crate) fn up_in(
                 "\n💾 Persistent: balances, txs & deployments survive `down` → `up --resume`."
             );
         }
-        UpMode::Fresh if has_saved_session(base) => {
+        UpMode::Fresh if has_saved_session(base, &engines) => {
             println!(
                 "\nℹ️  A saved session exists. Restore it with `up --resume`, or discard it with `up --reset`."
             );
@@ -643,6 +744,21 @@ fn probe_ready(port: u16, probe: &HealthProbe) -> bool {
                 None => false,
             }
         }
+        HealthProbe::JsonRpcAuth {
+            method,
+            authorization,
+        } => {
+            let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":[]}}"#);
+            let request = format!(
+                "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: {authorization}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            match http_roundtrip(port, &request) {
+                Some(response) => response.contains("\"result\""),
+                None => false,
+            }
+        }
         HealthProbe::HttpGet { path } => {
             let request =
                 format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
@@ -675,8 +791,9 @@ mod tests {
     use tempfile::tempdir;
 
     /// The default engine set (two Anvil chains, one Starknet chain, one Solana
-    /// chain), with explorers off — the generic checks don't care about the
-    /// `--ui` flag; the tests that do build their own engine set with it enabled.
+    /// chain, and Bitcoin + Litecoin regtest chains), with explorers off — the
+    /// generic checks don't care about the `--ui` flag; the tests that do build
+    /// their own engine set with it enabled.
     fn engines() -> Vec<Box<dyn Engine>> {
         engines_for(&Config::default(), false)
     }
@@ -690,6 +807,8 @@ mod tests {
         assert!(out.contains("anvil-2:"));
         assert!(out.contains("starknet-1:"));
         assert!(out.contains("solana-1:"));
+        assert!(out.contains("bitcoin-1:"));
+        assert!(out.contains("litecoin-1:"));
     }
 
     #[test]
@@ -709,26 +828,50 @@ mod tests {
     #[test]
     fn explorer_services_are_assigned_ports_and_configs_per_chain() {
         let svcs = explorer_services(&engines());
-        assert_eq!(svcs.len(), 2, "one explorer per EVM chain");
+        // One Otterscan per EVM chain, plus a btc-rpc-explorer for the Bitcoin
+        // chain (Litecoin gets none). Ports are handed out in engine order.
+        assert_eq!(svcs.len(), 3);
 
         assert_eq!(svcs[0].service_name, "explorer-anvil-1");
         assert_eq!(svcs[0].host_port, 5100);
         assert_eq!(svcs[0].url, "http://127.0.0.1:5100");
-        assert_eq!(svcs[0].config_rel_path, "state/otterscan-anvil-1.json");
-        // anvil-1 is published on 8545, so the browser points there.
-        assert!(
-            svcs[0]
-                .config_json
-                .contains("\"erigonURL\": \"http://127.0.0.1:8545\"")
-        );
+        match &svcs[0].render {
+            ExplorerRender::Otterscan {
+                config_rel_path,
+                config_json,
+                ..
+            } => {
+                assert_eq!(config_rel_path, "state/otterscan-anvil-1.json");
+                // anvil-1 is published on 8545, so the browser points there.
+                assert!(config_json.contains("\"erigonURL\": \"http://127.0.0.1:8545\""));
+            }
+            _ => panic!("anvil-1 should get an Otterscan explorer"),
+        }
 
         assert_eq!(svcs[1].service_name, "explorer-anvil-2");
         assert_eq!(svcs[1].host_port, 5101);
-        assert!(
-            svcs[1]
-                .config_json
-                .contains("\"erigonURL\": \"http://127.0.0.1:8546\"")
-        );
+        match &svcs[1].render {
+            ExplorerRender::Otterscan { config_json, .. } => {
+                assert!(config_json.contains("\"erigonURL\": \"http://127.0.0.1:8546\""));
+            }
+            _ => panic!("anvil-2 should get an Otterscan explorer"),
+        }
+
+        // The Bitcoin chain gets a btc-rpc-explorer wired to its in-network RPC
+        // (service name + internal port), not a published host port.
+        assert_eq!(svcs[2].service_name, "explorer-bitcoin-1");
+        assert_eq!(svcs[2].host_port, 5102);
+        match &svcs[2].render {
+            ExplorerRender::BtcRpc {
+                rpc_service,
+                rpc_port,
+                ..
+            } => {
+                assert_eq!(rpc_service, "bitcoin-1");
+                assert_eq!(*rpc_port, 18443);
+            }
+            _ => panic!("bitcoin-1 should get a btc-rpc-explorer"),
+        }
     }
 
     #[test]
@@ -885,11 +1028,13 @@ mod tests {
     #[test]
     fn engines_returns_default_set() {
         let engines = engines();
-        assert_eq!(engines.len(), 4);
+        assert_eq!(engines.len(), 6);
         assert_eq!(engines[0].name(), "anvil-1");
         assert_eq!(engines[1].name(), "anvil-2");
         assert_eq!(engines[2].name(), "starknet-1");
         assert_eq!(engines[3].name(), "solana-1");
+        assert_eq!(engines[4].name(), "bitcoin-1");
+        assert_eq!(engines[5].name(), "litecoin-1");
     }
 
     #[test]
@@ -900,15 +1045,22 @@ mod tests {
             .iter()
             .map(|e| e.manifest_entry().chain_id)
             .collect();
-        assert_eq!(ports, vec![8545, 8546, 5050, 8899]);
+        assert_eq!(ports, vec![8545, 8546, 5050, 8899, 18443, 19443]);
         assert_eq!(
             chain_ids,
-            vec!["31337", "31338", "0x534e5f5345504f4c4941", "localnet"]
+            vec![
+                "31337",
+                "31338",
+                "0x534e5f5345504f4c4941",
+                "localnet",
+                "regtest",
+                "regtest"
+            ]
         );
         // No two chains may share a host port or the compose file won't bind.
         assert_eq!(
             ports.iter().collect::<std::collections::HashSet<_>>().len(),
-            4
+            6
         );
     }
 
@@ -961,9 +1113,9 @@ mod tests {
         fs::write(state.join("session-solana-1.sqlite-shm"), "shm").unwrap();
         fs::write(state.join("anvil-tokens.json"), "baked").unwrap();
 
-        assert!(has_saved_session(dir.path()));
-        clear_sessions(dir.path()).unwrap();
-        assert!(!has_saved_session(dir.path()));
+        assert!(has_saved_session(dir.path(), &engines()));
+        clear_sessions(dir.path(), &engines()).unwrap();
+        assert!(!has_saved_session(dir.path(), &engines()));
         // The baked snapshot is left intact.
         assert!(state.join("anvil-tokens.json").exists());
         assert!(!state.join("session-anvil-1.json").exists());
@@ -977,9 +1129,9 @@ mod tests {
     #[test]
     fn has_saved_session_false_without_state_dir() {
         let dir = tempdir().unwrap();
-        assert!(!has_saved_session(dir.path()));
+        assert!(!has_saved_session(dir.path(), &engines()));
         // clear on a missing state dir is a no-op, not an error.
-        assert!(clear_sessions(dir.path()).is_ok());
+        assert!(clear_sessions(dir.path(), &engines()).is_ok());
     }
 
     #[test]

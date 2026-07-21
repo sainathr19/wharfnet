@@ -8,6 +8,7 @@ use crate::faucet;
 use crate::runtime::orchestrator;
 use crate::solana::control as sol_control;
 use crate::starknet::control as sn_control;
+use crate::utxo::control as utxo_control;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -101,6 +102,33 @@ enum Commands {
     Solana {
         #[command(subcommand)]
         command: SolanaCommands,
+    },
+    /// Bitcoin chain controls: mine regtest blocks on demand.
+    Bitcoin {
+        #[command(subcommand)]
+        command: UtxoCommands,
+    },
+    /// Litecoin chain controls: mine regtest blocks on demand.
+    Litecoin {
+        #[command(subcommand)]
+        command: UtxoCommands,
+    },
+}
+
+/// UTXO chain controls, shared by `wharfnet bitcoin …` and `wharfnet litecoin …`.
+/// Bitcoin and Litecoin run the same daemon family (regtest), so they share one
+/// verb set. Regtest mines only on demand, so `mine` is the whole surface — there
+/// is no time-travel or snapshot analogue for a UTXO chain.
+#[derive(Subcommand)]
+enum UtxoCommands {
+    /// Mine blocks on a chain (regtest `generatetoaddress`).
+    Mine {
+        /// Number of blocks to mine.
+        #[arg(default_value_t = 1)]
+        count: u64,
+        /// Target chain — a kind (`bitcoin`/`litecoin`) or a name (`bitcoin-1`).
+        #[arg(long)]
+        chain: Option<String>,
     },
 }
 
@@ -313,6 +341,18 @@ fn run(command: Commands) -> anyhow::Result<()> {
             SolanaCommands::Warp { timestamp, chain } => sol_control::warp(&chain, timestamp),
             SolanaCommands::PauseClock { chain } => sol_control::pause_clock(&chain),
             SolanaCommands::ResumeClock { chain } => sol_control::resume_clock(&chain),
+        },
+        // Bitcoin and Litecoin share the same control code; each namespace just
+        // defaults its `--chain` selector to its own kind.
+        Commands::Bitcoin { command } => match command {
+            UtxoCommands::Mine { count, chain } => {
+                utxo_control::mine(chain.as_deref().unwrap_or("bitcoin"), count)
+            }
+        },
+        Commands::Litecoin { command } => match command {
+            UtxoCommands::Mine { count, chain } => {
+                utxo_control::mine(chain.as_deref().unwrap_or("litecoin"), count)
+            }
         },
     }
 }

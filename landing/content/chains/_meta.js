@@ -2,5 +2,7 @@ export default {
   overview: 'Overview',
   evm: 'EVM',
   solana: 'Solana',
-  starknet: 'Starknet'
+  starknet: 'Starknet',
+  bitcoin: 'Bitcoin',
+  litecoin: 'Litecoin'
 }

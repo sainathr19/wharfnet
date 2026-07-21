@@ -20,11 +20,27 @@ pub enum StateMode {
     Persistent,
 }
 
-/// How to point a bundled block explorer at a chain. The browser talks to the
-/// chain directly, so it needs the chain's *published host* RPC port.
-pub struct ExplorerTarget {
-    pub chain_name: String,
-    pub rpc_host_port: u16,
+/// How to pair a chain with a bundled block-explorer container. Each variant
+/// carries the chain-side facts its explorer flavor needs; the orchestrator
+/// assigns the explorer's own host port and renders the compose service.
+#[derive(Debug)]
+pub enum ExplorerTarget {
+    /// Otterscan — a static host-side frontend. The *browser* makes the RPC
+    /// calls, so it's wired to the chain's published *host* RPC port.
+    Otterscan {
+        chain_name: String,
+        rpc_host_port: u16,
+    },
+    /// btc-rpc-explorer — a server-side app that makes RPC calls itself, over the
+    /// docker network, so it's wired to the chain's in-network service name +
+    /// *internal* RPC port and auth credentials.
+    BtcRpc {
+        chain_name: String,
+        rpc_service: String,
+        rpc_port: u16,
+        rpc_user: String,
+        rpc_pass: String,
+    },
 }
 
 /// How the orchestrator decides a chain's RPC is ready. Different engines speak
@@ -34,6 +50,13 @@ pub enum HealthProbe {
     /// POST a JSON-RPC request calling `method` and consider the chain ready once
     /// the response carries a `result` (used by EVM chains, e.g. `eth_chainId`).
     JsonRpc { method: &'static str },
+    /// Like [`JsonRpc`](Self::JsonRpc) but sends an HTTP Basic `Authorization`
+    /// header — for RPC endpoints that require auth (bitcoind/litecoind, whose
+    /// regtest RPC answers `getblockchaininfo` only with credentials).
+    JsonRpcAuth {
+        method: &'static str,
+        authorization: &'static str,
+    },
     /// GET `path` and consider the chain ready on an HTTP `200` (used by
     /// Starknet-devnet's `/is_alive`).
     HttpGet { path: &'static str },
@@ -70,6 +93,15 @@ pub trait Engine {
     fn health_probe(&self) -> HealthProbe;
     /// Files to write under the state dir before boot. Defaults to none.
     fn staged_files(&self, _mode: StateMode) -> Vec<StagedFile> {
+        Vec::new()
+    }
+    /// Host-side paths (relative to the state dir), each a file or directory,
+    /// that make up this engine's resumable session — wiped by `--reset` and
+    /// used to detect whether a saved session exists. Defaults to none: the
+    /// orchestrator already tracks the `session-*` snapshot files Anvil/surfpool
+    /// dump into `state/`, but a bitcoind datadir is a whole directory the
+    /// filename heuristic can't see, so the UTXO engine declares it here.
+    fn session_paths(&self) -> Vec<String> {
         Vec::new()
     }
     /// How to pair this chain with an Otterscan explorer, if it supports one.

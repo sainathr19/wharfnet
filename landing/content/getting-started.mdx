@@ -102,9 +102,10 @@ in the per-chain guides. `--resume` and `--reset` are mutually exclusive.
 
 ## Configuration
 
-wharfnet runs zero-config — two Anvil chains, a Starknet chain, and a Solana
-chain by default (`anvil-1` :8545, `anvil-2` :8546, `starknet-1` :5050,
-`solana-1` :8899). To customise the topology — including dropping a chain — write
+wharfnet runs zero-config — two Anvil chains, a Starknet chain, a Solana chain,
+and Bitcoin + Litecoin regtest chains by default (`anvil-1` :8545, `anvil-2`
+:8546, `starknet-1` :5050, `solana-1` :8899, `bitcoin-1` :18443, `litecoin-1`
+:19443). To customise the topology — including dropping a chain — write
 a `wharfnet.toml` in your project root (a config replaces the defaults entirely):
 
 ```toml filename="wharfnet.toml"
@@ -126,8 +127,8 @@ port = 8899
 ```
 
 Each chain needs a unique `name` and `port`; `kind` defaults to `evm` and may be
-`starknet` or `solana`. EVM chains also need a numeric `chain_id`; Starknet and
-Solana chains omit it. Accounts and test tokens come from the baked presets and
+`starknet`, `solana`, `bitcoin`, or `litecoin`. EVM chains also need a numeric
+`chain_id`; the others omit it. Accounts and test tokens come from the baked presets and
 aren't configured here. Run `wharfnet compose` to see the resolved setup — and to
 catch config errors — without booting anything.
 
