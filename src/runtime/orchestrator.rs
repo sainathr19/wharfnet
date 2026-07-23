@@ -23,6 +23,7 @@ use crate::evm::engine::EvmEngine;
 use crate::solana::engine::SolanaEngine;
 use crate::starknet::engine::StarknetEngine;
 use crate::utxo::engine::{BITCOIN, LITECOIN, UtxoEngine};
+use crate::zksync::engine::{ZKSYNC_DEFAULT_CHAIN_ID, ZkSyncEngine};
 use serde::Serialize;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
@@ -127,6 +128,24 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
         // params differ. Regtest, no fork (config rejects fork_url for them).
         "bitcoin" => Box::new(UtxoEngine::new(BITCOIN, &c.name, c.port)),
         "litecoin" => Box::new(UtxoEngine::new(LITECOIN, &c.name, c.port)),
+        "zksync" => {
+            // A chain_id is optional for zksync; fall back to anvil-zksync's own
+            // default (260) when omitted. validate() guarantees any provided id is
+            // numeric, so the parse can't realistically fail.
+            let chain_id = c
+                .chain_id
+                .as_deref()
+                .map(|id| {
+                    id.parse::<u64>()
+                        .expect("validate() guarantees a numeric zksync chain_id")
+                })
+                .unwrap_or(ZKSYNC_DEFAULT_CHAIN_ID);
+            let mut engine = ZkSyncEngine::new(&c.name, c.port, chain_id);
+            if let Some(url) = &c.fork_url {
+                engine = engine.fork(url.clone(), c.fork_block);
+            }
+            Box::new(engine)
+        }
         other => unreachable!("validate() rejects unsupported kind '{other}'"),
     }
 }
@@ -791,7 +810,8 @@ mod tests {
     use tempfile::tempdir;
 
     /// The default engine set (two Anvil chains, one Starknet chain, one Solana
-    /// chain, and Bitcoin + Litecoin regtest chains), with explorers off — the
+    /// chain, Bitcoin + Litecoin regtest chains, and a zkSync chain), with
+    /// explorers off — the
     /// generic checks don't care about the `--ui` flag; the tests that do build
     /// their own engine set with it enabled.
     fn engines() -> Vec<Box<dyn Engine>> {
@@ -809,6 +829,7 @@ mod tests {
         assert!(out.contains("solana-1:"));
         assert!(out.contains("bitcoin-1:"));
         assert!(out.contains("litecoin-1:"));
+        assert!(out.contains("zksync-1:"));
     }
 
     #[test]
@@ -1028,13 +1049,14 @@ mod tests {
     #[test]
     fn engines_returns_default_set() {
         let engines = engines();
-        assert_eq!(engines.len(), 6);
+        assert_eq!(engines.len(), 7);
         assert_eq!(engines[0].name(), "anvil-1");
         assert_eq!(engines[1].name(), "anvil-2");
         assert_eq!(engines[2].name(), "starknet-1");
         assert_eq!(engines[3].name(), "solana-1");
         assert_eq!(engines[4].name(), "bitcoin-1");
         assert_eq!(engines[5].name(), "litecoin-1");
+        assert_eq!(engines[6].name(), "zksync-1");
     }
 
     #[test]
@@ -1045,7 +1067,7 @@ mod tests {
             .iter()
             .map(|e| e.manifest_entry().chain_id)
             .collect();
-        assert_eq!(ports, vec![8545, 8546, 5050, 8899, 18443, 19443]);
+        assert_eq!(ports, vec![8545, 8546, 5050, 8899, 18443, 19443, 8011]);
         assert_eq!(
             chain_ids,
             vec![
@@ -1054,14 +1076,64 @@ mod tests {
                 "0x534e5f5345504f4c4941",
                 "localnet",
                 "regtest",
-                "regtest"
+                "regtest",
+                "260"
             ]
         );
         // No two chains may share a host port or the compose file won't bind.
         assert_eq!(
             ports.iter().collect::<std::collections::HashSet<_>>().len(),
-            6
+            7
         );
+    }
+
+    #[test]
+    fn engine_for_builds_a_zksync_chain_from_config() {
+        // A zksync chain with no chain_id falls back to anvil-zksync's default,
+        // and its service renders with the `run` subcommand.
+        let config = Config {
+            chains: vec![config::ChainConfig {
+                name: "zksync-1".into(),
+                kind: "zksync".into(),
+                port: 8011,
+                chain_id: None,
+                block_time: 1,
+                fork_url: None,
+                fork_block: None,
+            }],
+        };
+        let engines = engines_for(&config, false);
+        assert_eq!(engines.len(), 1);
+        assert_eq!(engines[0].name(), "zksync-1");
+        let entry = engines[0].manifest_entry();
+        assert_eq!(entry.kind, "zksync");
+        // Falls back to anvil-zksync's default chain id.
+        assert_eq!(entry.chain_id, "260");
+
+        let out = render_compose(&engines, StateMode::Ephemeral, &[]);
+        assert!(out.contains("zksync-1:"));
+        assert!(out.contains("ghcr.io/matter-labs/anvil-zksync"));
+        assert!(out.contains("\"run\""));
+    }
+
+    #[test]
+    fn engine_for_builds_a_forked_zksync_chain() {
+        let config = Config {
+            chains: vec![config::ChainConfig {
+                name: "zk-fork".into(),
+                kind: "zksync".into(),
+                port: 8011,
+                chain_id: Some("300".into()),
+                block_time: 1,
+                fork_url: Some("https://rpc.example/key".into()),
+                fork_block: Some(42),
+            }],
+        };
+        let out = render_compose(&engines_for(&config, false), StateMode::Ephemeral, &[]);
+        assert!(out.contains("\"fork\""));
+        assert!(out.contains("\"--fork-url\", \"https://rpc.example/key\""));
+        assert!(out.contains("\"--fork-block-number\", \"42\""));
+        assert!(out.contains("\"--chain-id\", \"300\""));
     }
 
     #[test]

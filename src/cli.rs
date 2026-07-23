@@ -9,6 +9,7 @@ use crate::runtime::orchestrator;
 use crate::solana::control as sol_control;
 use crate::starknet::control as sn_control;
 use crate::utxo::control as utxo_control;
+use crate::zksync::control as zksync_control;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -113,6 +114,11 @@ enum Commands {
         #[command(subcommand)]
         command: UtxoCommands,
     },
+    /// zkSync chain controls: mine, advance time, impersonate, snapshot/revert.
+    Zksync {
+        #[command(subcommand)]
+        command: ZksyncCommands,
+    },
 }
 
 /// UTXO chain controls, shared by `wharfnet bitcoin …` and `wharfnet litecoin …`.
@@ -180,6 +186,59 @@ enum EvmCommands {
         /// Snapshot id (e.g. `0x1`).
         id: String,
         #[arg(long, default_value = "evm")]
+        chain: String,
+    },
+}
+
+/// zkSync-specific chain controls, grouped under `wharfnet zksync …`. anvil-zksync
+/// implements the same `evm_*`/`anvil_*` cheat RPCs as Anvil, so these mirror the
+/// `wharfnet evm` verbs one-for-one — including snapshot/revert.
+#[derive(Subcommand)]
+enum ZksyncCommands {
+    /// Mine blocks on a chain.
+    Mine {
+        /// Number of blocks to mine.
+        #[arg(default_value_t = 1)]
+        count: u64,
+        /// Target chain — `zksync` for every zkSync chain, or a name like
+        /// `zksync-1`.
+        #[arg(long, default_value = "zksync")]
+        chain: String,
+    },
+    /// Fast-forward chain time by N seconds (mines a block to apply it).
+    IncreaseTime {
+        /// Seconds to advance.
+        seconds: u64,
+        #[arg(long, default_value = "zksync")]
+        chain: String,
+    },
+    /// Set the next block's timestamp to an absolute Unix time (mines a block).
+    Warp {
+        /// Unix timestamp in seconds.
+        timestamp: u64,
+        #[arg(long, default_value = "zksync")]
+        chain: String,
+    },
+    /// Impersonate an account so you can send txs as it — no private key needed.
+    Impersonate {
+        /// Address to impersonate.
+        address: String,
+        /// Stop impersonating the address instead.
+        #[arg(long)]
+        stop: bool,
+        #[arg(long, default_value = "zksync")]
+        chain: String,
+    },
+    /// Snapshot chain state; prints an id you can `revert` to later.
+    Snapshot {
+        #[arg(long, default_value = "zksync")]
+        chain: String,
+    },
+    /// Revert chain state to a snapshot id from `wharfnet zksync snapshot`.
+    Revert {
+        /// Snapshot id (e.g. `0x1`).
+        id: String,
+        #[arg(long, default_value = "zksync")]
         chain: String,
     },
 }
@@ -353,6 +412,20 @@ fn run(command: Commands) -> anyhow::Result<()> {
             UtxoCommands::Mine { count, chain } => {
                 utxo_control::mine(chain.as_deref().unwrap_or("litecoin"), count)
             }
+        },
+        Commands::Zksync { command } => match command {
+            ZksyncCommands::Mine { count, chain } => zksync_control::mine(&chain, count),
+            ZksyncCommands::IncreaseTime { seconds, chain } => {
+                zksync_control::increase_time(&chain, seconds)
+            }
+            ZksyncCommands::Warp { timestamp, chain } => zksync_control::warp(&chain, timestamp),
+            ZksyncCommands::Impersonate {
+                address,
+                stop,
+                chain,
+            } => zksync_control::impersonate(&chain, &address, stop),
+            ZksyncCommands::Snapshot { chain } => zksync_control::snapshot(&chain),
+            ZksyncCommands::Revert { id, chain } => zksync_control::revert(&chain, &id),
         },
     }
 }
@@ -552,6 +625,47 @@ mod tests {
     }
 
     #[test]
+    fn parses_zksync_control_commands() {
+        // `zksync mine`: count defaults to 1, chain defaults to zksync.
+        let cli = Cli::try_parse_from(["wharfnet", "zksync", "mine"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Zksync {
+                command: ZksyncCommands::Mine { count: 1, ref chain }
+            } if chain == "zksync"
+        ));
+
+        let cli = Cli::try_parse_from(["wharfnet", "zksync", "mine", "7", "--chain", "zksync-1"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Zksync {
+                command: ZksyncCommands::Mine { count: 7, ref chain }
+            } if chain == "zksync-1"
+        ));
+
+        // `zksync impersonate --stop`
+        let cli =
+            Cli::try_parse_from(["wharfnet", "zksync", "impersonate", "0xabc", "--stop"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Zksync {
+                command: ZksyncCommands::Impersonate { stop: true, .. }
+            }
+        ));
+
+        // `zksync revert <id>` — snapshot/revert exist (unlike starknet/solana).
+        let cli = Cli::try_parse_from(["wharfnet", "zksync", "revert", "0x1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Zksync {
+                command: ZksyncCommands::Revert { ref id, .. }
+            } if id == "0x1"
+        ));
+        assert!(Cli::try_parse_from(["wharfnet", "zksync", "snapshot"]).is_ok());
+    }
+
+    #[test]
     fn parses_starknet_control_commands() {
         // `starknet mine`: count defaults to 1, chain defaults to starknet.
         let cli = Cli::try_parse_from(["wharfnet", "starknet", "mine"]).unwrap();
@@ -687,6 +801,7 @@ mod tests {
         let evm = |c| Commands::Evm { command: c };
         let sn = |c| Commands::Starknet { command: c };
         let sol = |c| Commands::Solana { command: c };
+        let zks = |c| Commands::Zksync { command: c };
         let future = 4_102_444_800; // year 2100 — satisfies forward-only warps
 
         run(evm(EvmCommands::Mine {
@@ -780,6 +895,52 @@ mod tests {
             chain: "solana-1".into(),
         }))
         .expect("solana resume-clock");
+
+        // zkSync: the full EVM verb set — mine, increase-time, warp, impersonate
+        // (+stop), snapshot, revert — driven through the public dispatch.
+        run(zks(ZksyncCommands::Mine {
+            count: 2,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync mine");
+        run(zks(ZksyncCommands::IncreaseTime {
+            seconds: 60,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync increase-time");
+        run(zks(ZksyncCommands::Warp {
+            timestamp: future,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync warp");
+        run(zks(ZksyncCommands::Impersonate {
+            address: "0x0000000000000000000000000000000000000002".into(),
+            stop: false,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync impersonate");
+        run(zks(ZksyncCommands::Impersonate {
+            address: "0x0000000000000000000000000000000000000002".into(),
+            stop: true,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync stop impersonate");
+        run(zks(ZksyncCommands::Snapshot {
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync snapshot");
+        let _ = run(zks(ZksyncCommands::Revert {
+            id: "0x1".into(),
+            chain: "zksync-1".into(),
+        }));
+        run(Commands::Faucet {
+            chain: "zksync-1".into(),
+            address: "0x0000000000000000000000000000000000000abc".into(),
+            amount: "10".into(),
+            token: None,
+            raw: false,
+        })
+        .expect("zksync faucet");
 
         // Faucet (native + tokens) and logs, both through the dispatch.
         run(Commands::Faucet {

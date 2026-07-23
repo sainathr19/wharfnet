@@ -27,6 +27,7 @@ mod runtime;
 mod solana;
 mod starknet;
 mod utxo;
+mod zksync;
 
 // Internal docker-backed harness for the crate's own end-to-end tests.
 #[cfg(test)]

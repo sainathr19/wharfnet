@@ -17,11 +17,13 @@ the same way across all of them.
 | [**Solana**](/chains/solana) | surfpool | `:8899` (+ `:8900` WS) | USDC, WBTC | Studio | ✓ (`fork_url`) |
 | [**Bitcoin**](/chains/bitcoin) | bitcoind (regtest) | `:18443` | — (native BTC only) | btc-rpc-explorer | — |
 | [**Litecoin**](/chains/litecoin) | litecoind (regtest) | `:19443` | — (native LTC only) | planned (TODO) | — |
+| [**zkSync**](/chains/zksync) | anvil-zksync | `:8011` | — (native ETH only, planned) | planned (TODO) | ✓ (`fork_url` + `fork_block`) |
 
-Every chain also supports **opt-in persistence** — `wharfnet up --resume` keeps
-balances, transactions, and deployments across restarts, and `--reset` discards a
-saved session. See [State & persistence](/getting-started#resuming-a-session) for
-the shared model.
+Every chain except zkSync supports **opt-in persistence** — `wharfnet up --resume`
+keeps balances, transactions, and deployments across restarts, and `--reset`
+discards a saved session (zkSync is ephemeral for now — persistence is planned).
+See [State & persistence](/getting-started#resuming-a-session) for the shared
+model.
 
 ## Per-chain guides
 
@@ -37,6 +39,9 @@ the shared model.
 - [**Litecoin**](/chains/litecoin) — litecoind regtest (a Bitcoin Core fork), a
   funded coinbase wallet, native-LTC faucet, and on-demand block mining; bundled
   explorer planned (TODO).
+- [**zkSync**](/chains/zksync) — anvil-zksync, funded dev accounts, native-ETH
+  faucet, the full EVM control set (mine, time-travel, snapshot/revert,
+  impersonate), and forking; test tokens and a bundled explorer planned (TODO).
 
 Adding a chain kind is a matter of implementing the `Engine` trait — see
 [Contributing](/contributing#adding-a-chain-kind-or-capability).

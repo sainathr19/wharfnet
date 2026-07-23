@@ -8,7 +8,8 @@
 //! ERC-20s (see [`crate::evm::faucet`]); Starknet mints ETH/STRK through devnet's
 //! cheat and its Cairo test tokens through signed invokes (see
 //! [`crate::starknet::faucet`]); Solana airdrops SOL and tops up its SPL tokens
-//! through cheatcodes (see [`crate::solana::faucet`]).
+//! through cheatcodes (see [`crate::solana::faucet`]); and zkSync tops up native
+//! ETH via the `anvil_setBalance` cheat (see [`crate::zksync::faucet`]).
 
 use anyhow::{Result, bail};
 use std::path::Path;
@@ -54,6 +55,7 @@ pub(crate) fn run_in(
             "bitcoin" | "litecoin" => {
                 crate::utxo::faucet::fund_chain(chain, address, amount, token, raw)?
             }
+            "zksync" => crate::zksync::faucet::fund_chain(chain, address, amount, token, raw)?,
             other => bail!(
                 "faucet is not yet supported for {other} chains (chain '{}')",
                 chain.name

@@ -9,11 +9,16 @@ instead of hand-writing config in Rust.
 - `docker/` — docker-compose building blocks
   - `compose.header.yml` — header prepended to every generated compose file
   - `services/` — one template per engine. `{{PLACEHOLDERS}}` are substituted at
-    runtime by the matching `Engine` impl in `src/engine.rs`.
+    runtime by the matching `Engine` impl in the per-kind `engine.rs`.
     - `anvil.yml` — Anvil (EVM) service
-    - _(M2)_ `solana.yml`, `starknet.yml`, …
-- _(M4)_ `contracts/` — test-token sources (ERC-20 / SPL / Cairo) deployed by
-  `wharfnet deploy`
+    - `solana.yml` — surfpool (Solana) service
+    - `starknet.yml` — starknet-devnet service
+    - `utxo.yml` — bitcoind / litecoind (Bitcoin, Litecoin) regtest service
+    - `zksync.yml` — anvil-zksync (zkSync) service
+    - `otterscan.yml`, `btc-rpc-explorer.yml` — bundled block-explorer sidecars
+- `contracts/` — test-token sources (ERC-20 / Cairo) baked into the chain snapshots
+- `abi/`, `presets/`, `state/` — embedded ABIs, canonical-contract presets, and
+  baked chain state (see `presets/README.md`)
 
 ## Source vs. generated
 

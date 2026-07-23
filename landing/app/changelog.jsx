@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { categories, entries } from '../content/changelog-data'
 
 const CATEGORY_COLOR = {
+  zkSync: '#5b6ef5',
   Solana: '#9945ff',
   Starknet: '#ec4899',
   EVM: '#3b82f6',

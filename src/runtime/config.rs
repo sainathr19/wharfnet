@@ -3,8 +3,8 @@
 //! When a `wharfnet.toml` is present in the working directory it defines the
 //! chain topology — which chains to boot and their ports, chain IDs, and block
 //! times. Without one, the built-in defaults are used (two Anvil EVM chains, a
-//! Starknet chain, a Solana chain, and Bitcoin + Litecoin regtest chains), so
-//! wharfnet stays zero-config.
+//! Starknet chain, a Solana chain, Bitcoin + Litecoin regtest chains, and a
+//! zkSync chain), so wharfnet stays zero-config.
 //!
 //! Accounts and test tokens are not configurable here: they come from each
 //! engine's baked state (see the per-kind `engine.rs`).
@@ -156,6 +156,16 @@ impl Default for Config {
                     name: "litecoin-1".to_string(),
                     kind: "litecoin".to_string(),
                     port: 19443,
+                    chain_id: None,
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+                ChainConfig {
+                    name: "zksync-1".to_string(),
+                    kind: "zksync".to_string(),
+                    port: 8011,
+                    // zksync uses anvil-zksync's default chain id (260).
                     chain_id: None,
                     block_time: 1,
                     fork_url: None,
@@ -327,8 +337,24 @@ fn validate(config: &Config) -> Result<()> {
                     );
                 }
             }
+            "zksync" => {
+                // anvil-zksync uses its own default chain id (260) when none is
+                // given, so a chain_id is optional (like Starknet/Solana); if one
+                // is set it must be numeric, mirroring the EVM check. Forking is
+                // supported via the `fork` subcommand — `fork_url` and a
+                // `fork_block` pin (`--fork-block-number`) are both honored, so the
+                // shared fork fields need no extra restriction here.
+                if let Some(id) = c.chain_id.as_deref() {
+                    id.parse::<u64>().map_err(|_| {
+                        anyhow::anyhow!(
+                            "chain '{}': chain_id '{id}' must be a number for a zksync chain",
+                            c.name
+                        )
+                    })?;
+                }
+            }
             other => bail!(
-                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet, solana, bitcoin, litecoin)",
+                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet, solana, bitcoin, litecoin, zksync)",
                 c.name
             ),
         }
@@ -365,9 +391,9 @@ mod tests {
     }
 
     #[test]
-    fn default_is_two_anvil_a_starknet_a_solana_and_two_utxo_chains() {
+    fn default_is_two_anvil_a_starknet_a_solana_two_utxo_and_a_zksync_chain() {
         let c = Config::default();
-        assert_eq!(c.chains.len(), 6);
+        assert_eq!(c.chains.len(), 7);
         assert_eq!(c.chains[0].name, "anvil-1");
         assert_eq!(c.chains[0].port, 8545);
         assert_eq!(c.chains[1].chain_id.as_deref(), Some("31338"));
@@ -390,13 +416,19 @@ mod tests {
         assert_eq!(c.chains[5].kind, "litecoin");
         assert_eq!(c.chains[5].port, 19443);
         assert!(c.chains[5].chain_id.is_none());
+        // The zkSync chain is on by default too; it uses anvil-zksync's default
+        // chain id, so it carries none here.
+        assert_eq!(c.chains[6].name, "zksync-1");
+        assert_eq!(c.chains[6].kind, "zksync");
+        assert_eq!(c.chains[6].port, 8011);
+        assert!(c.chains[6].chain_id.is_none());
     }
 
     #[test]
     fn missing_file_yields_defaults() {
         let dir = tempdir().unwrap();
         let c = load_from(&dir.path().join(CONFIG_FILE)).unwrap();
-        assert_eq!(c.chains.len(), 6);
+        assert_eq!(c.chains.len(), 7);
     }
 
     #[test]
@@ -716,6 +748,71 @@ mod tests {
             err.to_string().contains("cannot pin a Solana fork"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn accepts_zksync_kind_with_and_without_a_chain_id() {
+        let dir = tempdir().unwrap();
+        // No chain_id: anvil-zksync falls back to its default (260).
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "zksync-1"
+            kind = "zksync"
+            port = 8011
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].kind, "zksync");
+        assert!(c.chains[0].chain_id.is_none());
+
+        // An explicit numeric chain_id is accepted and stored as a string.
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "zksync-1"
+            kind = "zksync"
+            port = 8011
+            chain_id = 320
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].chain_id.as_deref(), Some("320"));
+    }
+
+    #[test]
+    fn zksync_rejects_a_non_numeric_chain_id() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            "[[chains]]\nname = \"zksync-1\"\nkind = \"zksync\"\nport = 8011\nchain_id = \"SN_MAIN\"\n",
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(err.to_string().contains("must be a number"), "{err}");
+    }
+
+    #[test]
+    fn zksync_accepts_fork_fields() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "zksync-fork"
+            kind = "zksync"
+            port = 8011
+            fork_url = "https://rpc.example/key"
+            fork_block = 12345
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(
+            c.chains[0].fork_url.as_deref(),
+            Some("https://rpc.example/key")
+        );
+        assert_eq!(c.chains[0].fork_block, Some(12345));
     }
 
     #[test]

@@ -11,7 +11,7 @@ export function BootDemo() {
       </div>
       <pre className="term-body">
         <span className="t-dim">$ </span>wharfnet up{'\n'}
-        <span className="t-accent">⚓</span> booting 6 chains + block explorers…{'\n'}
+        <span className="t-accent">⚓</span> booting 7 chains + block explorers…{'\n'}
         {'  '}
         <span className="t-ok">✔</span> anvil-1{'     '}
         <span className="t-url">http://127.0.0.1:8545</span>
@@ -48,7 +48,13 @@ export function BootDemo() {
         {'     '}
         <span className="t-dim">litecoin</span>
         {'\n'}
-        <span className="t-dim">  ready in 4.2s — funded dev accounts, test tokens, explorers</span>
+        {'  '}
+        <span className="t-ok">✔</span> zksync-1{'    '}
+        <span className="t-url">http://127.0.0.1:8011</span>
+        {'      '}
+        <span className="t-dim">zksync</span>
+        {'\n'}
+        <span className="t-dim">  ready in 4.8s — funded dev accounts, test tokens, explorers</span>
         {'\n\n'}
         <span className="t-dim">$ </span>wharfnet faucet evm 0x70997970…79C8 1000 --token USDC{'\n'}
         {'  '}
