@@ -1,9 +1,27 @@
 // Changelog timeline data — newest first. Dates are the commit dates the
 // feature landed; `tag` is the PR it shipped in (optional). Descriptions may
 // use `backticks` for inline code, rendered as code chips.
-export const categories = ['Solana', 'Starknet', 'EVM', 'UTXO', 'Core']
+export const categories = ['zkSync', 'Solana', 'Starknet', 'EVM', 'UTXO', 'Core']
 
 export const entries = [
+  {
+    date: 'July 23, 2026',
+    category: 'zkSync',
+    title: 'zkSync chain',
+    changes: [
+      'A zkSync chain (`zksync-1`, `:8011`) now boots **by default**, running Matter Labs\' [`anvil-zksync`](https://github.com/matter-labs/anvil-zksync) in-memory node (the EraVM analogue of Anvil) from a pinned image, at chain id `260`. Selectable via `kind = "zksync"` in `wharfnet.toml`.',
+      'anvil-zksync funds the standard Anvil test-mnemonic accounts (10,000 ETH each), recorded in the manifest. Its image ships no `cast`, so chain control and the faucet drive the node over a dependency-free JSON-RPC client rather than exec-ing a CLI inside the container. Persistence works via `--state` (`session-<chain>.json`), like the other chains.',
+    ],
+  },
+  {
+    date: 'July 23, 2026',
+    category: 'zkSync',
+    title: 'zkSync faucet, chain control & forking',
+    changes: [
+      'The unified `faucet` tops up native ETH additively via the `anvil_setBalance` cheat (decimal coins, or wei with `--raw`). There are no bundled test tokens yet — EraVM test tokens are planned — so `--token` accepts only `ETH`.',
+      'anvil-zksync implements the same `evm_*`/`anvil_*` cheats as Anvil, so `wharfnet zksync` mirrors the EVM verb set one-for-one — `mine`, `increase-time`, `warp`, `impersonate`, and `snapshot`/`revert` (which Starknet/Solana have no analogue for). Forking a live zkSync network is supported via `fork_url` + `fork_block` (anvil-zksync\'s `fork` subcommand).',
+    ],
+  },
   {
     date: 'July 20, 2026',
     category: 'UTXO',

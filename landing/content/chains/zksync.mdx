@@ -1,0 +1,132 @@
+---
+title: zkSync
+---
+
+import { Callout } from 'nextra/components'
+
+# zkSync
+
+`wharfnet up` boots an
+[`anvil-zksync`](https://github.com/matter-labs/anvil-zksync) chain by default
+(`zksync-1` on `:8011`), alongside the EVM, Starknet, Solana, and Bitcoin/Litecoin
+chains — one command, one manifest, one `status`. anvil-zksync is Matter Labs'
+in-memory zkSync node (the EraVM analogue of Anvil): it boots in about a second
+and serves an Anvil-compatible JSON-RPC, so the usual Ethereum tooling points
+straight at it. To run without it, write a `wharfnet.toml` that omits the zkSync
+chain (a config replaces the defaults).
+
+```sh
+wharfnet up --bare
+# Anvil-compatible JSON-RPC on :8011
+curl -s -X POST http://127.0.0.1:8011 \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'   # -> {"result":"0x104"}
+```
+
+<Callout type="info">
+  Writing Rust tests? Read the endpoints and the funded account from a running
+  localnet with [`wharfnet::testkit`](/examples). zkSync has no per-kind accessor,
+  so select by name: `net.chain("zksync-1")?.rpc_url()` and `.account(0)` (a
+  funded dev account with its private key). There are no test tokens yet, so
+  `token`/`token_abi` don't apply.
+</Callout>
+
+Each zkSync chain comes with **deterministic funded dev accounts** — anvil-zksync
+funds the standard Anvil test-mnemonic accounts (mnemonic `"test test test test
+test test test test test test test junk"`), so they're identical to the EVM
+chains' accounts and to well-known Ethereum tooling defaults. They're funded with
+10,000 ETH each at boot and recorded in the manifest with their private keys.
+Readiness is checked against anvil-zksync's `eth_chainId` RPC, and the default
+chain id is **260**.
+
+## Test tokens
+
+zkSync has **no bundled test tokens yet** — the chain boots with just the funded
+native-coin (**ETH**) accounts above. zkSync contracts compile to EraVM bytecode
+(not EVM bytecode), so the EVM stack's baked token snapshot doesn't carry over;
+EraVM test tokens are **planned**. In the meantime, fund ETH with the faucet and
+deploy your own tokens with a zkSync-aware toolchain (e.g. `foundry-zksync` or
+`zksync-ethers`).
+
+## Faucet
+
+The unified `faucet` command works on zkSync chains too:
+
+```sh
+# native ETH, on every zkSync chain
+wharfnet faucet zksync 0xabc… 100
+
+# a specific chain, native coin named explicitly
+wharfnet faucet zksync-1 0xabc… 2.5 --token ETH
+
+# exact base units (wei) instead of decimal coins
+wharfnet faucet zksync-1 0xabc… 1000000000000000000 --raw
+```
+
+Funding tops up native ETH additively through anvil-zksync's `anvil_setBalance`
+cheat (read the current balance, add, set), so an existing balance is never
+clobbered and no dev account is drained. Amounts are decimal coins (18 decimals)
+or exact base units (wei) with `--raw`. `--token` may be `ETH` or omitted — there
+are no other tokens yet, so any other value errors.
+
+## Chain control
+
+anvil-zksync implements the same `evm_*`/`anvil_*` cheat RPCs as Anvil, so the
+zkSync chain-control verbs mirror the `wharfnet evm` set **one-for-one** —
+including `snapshot`/`revert`, which the Starknet and Solana engines have no
+analogue for. They live under `wharfnet zksync` and each takes a `--chain`
+selector (`zksync` for every zkSync chain, or a name like `zksync-1`; defaults to
+`zksync`):
+
+```sh
+wharfnet zksync mine 10                # mine 10 blocks
+wharfnet zksync increase-time 86400    # fast-forward time by a day (mines a block)
+wharfnet zksync warp 1893456000        # set the next block to an absolute Unix time
+wharfnet zksync impersonate 0x0123…    # send txs as any account, no key needed
+wharfnet zksync impersonate 0x0123… --stop
+wharfnet zksync snapshot               # prints an id you can revert to
+wharfnet zksync revert 0x1             # roll state back to a snapshot id
+```
+
+The image ships only the node binary (no `cast`), so these talk to the chain's
+published RPC directly rather than shelling into the container.
+
+## Forking
+
+Set `fork_url` (and optionally `fork_block`) on a `kind = "zksync"` chain and it
+boots as a fork via anvil-zksync's `fork` subcommand, mirroring the origin's
+state. The same `${VAR}` expansion and redaction as the EVM side apply — the key
+never lands in the file or the manifest:
+
+```toml filename="wharfnet.toml"
+[[chains]]
+name = "zk-fork"
+kind = "zksync"
+port = 8011
+fork_url = "${ZKSYNC_RPC}"   # a zkSync JSON-RPC endpoint (e.g. Era mainnet/Sepolia)
+fork_block = 12345678        # optional; omit to track the latest block
+```
+
+anvil-zksync funds the dev accounts over the fork, so you have funded signers to
+send transactions against real forked state right away.
+
+## Block explorer
+
+<Callout type="info">
+  A bundled zkSync explorer is **planned (TODO)**, not yet shipped. Otterscan —
+  which backs the EVM chains — speaks EVM bytecode, not EraVM, so it can't be
+  pointed at anvil-zksync; a zkSync-native explorer is the intended path to
+  explorer parity.
+</Callout>
+
+Until then zkSync ships **no bundled explorer**: wharfnet advertises no explorer
+URL for `kind = "zksync"` chains (the manifest omits the field, and `status`
+shows none). The RPC is fully functional in the meantime — inspect the chain over
+JSON-RPC (`eth_getBlockByNumber`, `eth_getTransactionReceipt`, …).
+
+## Persistence
+
+zkSync chains persist across `up --resume` / `up --reset` like the other chains:
+anvil-zksync dumps its state to a per-chain `session-<chain>.json` under
+`.wharfnet/state/` (via `--state`, flushed on an interval), reloaded on the next
+`--resume`. See [Resuming a session](/getting-started#resuming-a-session) for the
+shared model.

@@ -10,6 +10,31 @@ surface may still change.
 
 ## [Unreleased]
 
+### Added
+
+- **zkSync chain** — wharfnet can now boot a zkSync (`zksync`) chain running
+  Matter Labs' [`anvil-zksync`](https://github.com/matter-labs/anvil-zksync)
+  in-memory node (the EraVM analogue of Anvil) from a pinned image, at chain id
+  `260`. anvil-zksync funds the standard Anvil test-mnemonic accounts (10,000 ETH
+  each), recorded in the `status`/manifest. It's on by default — `wharfnet up` now
+  boots `zksync-1` (:8011) alongside the EVM, Starknet, Solana, and
+  Bitcoin/Litecoin chains — and can be dropped or reconfigured via `wharfnet.toml`.
+  The image ships no `cast`, so chain control and the faucet drive the node over a
+  dependency-free JSON-RPC client rather than exec-ing a CLI inside the container.
+
+  - **Faucet** — `wharfnet faucet zksync <address> <amount>` tops up native ETH
+    additively via the `anvil_setBalance` cheat (decimal coins, or wei with
+    `--raw`). There are no bundled test tokens yet — EraVM test tokens are planned
+    — so `--token` accepts only `ETH`.
+  - **Chain control** — anvil-zksync implements the same `evm_*`/`anvil_*` cheats
+    as Anvil, so `wharfnet zksync` mirrors the EVM verb set one-for-one: `mine`,
+    `increase-time`, `warp`, `impersonate`, and `snapshot`/`revert`.
+  - **Forking** — a live zkSync network can be forked via `fork_url` (+ optional
+    `fork_block`), using anvil-zksync's `fork` subcommand.
+  - **Persistence** — `up --resume` dumps per-chain state to
+    `.wharfnet/state/session-<chain>.json` (via `--state`), reloaded on the next
+    resume; `up --reset` wipes it and a default `up` stays ephemeral.
+
 ## [0.1.0-alpha.1] - 2026-07-20
 
 ### Added

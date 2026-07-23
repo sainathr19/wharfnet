@@ -4,18 +4,18 @@
 [![docs](https://img.shields.io/badge/docs-sainathr19.github.io%2Fwharfnet-blue)](https://sainathr19.github.io/wharfnet/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-**One-command localnet for EVM, Solana, Starknet, Bitcoin & Litecoin — built-in faucet, pre-deployed test tokens and more.**
+**One-command localnet for EVM, Solana, Starknet, Bitcoin, Litecoin & zkSync — built-in faucet, pre-deployed test tokens and more.**
 
-> ⚠️ Early WIP. Five chains — EVM (Anvil), Starknet (starknet-devnet), Solana
-> (surfpool), and Bitcoin + Litecoin (regtest) — boot by default with funded
-> accounts, a faucet, chain control, and persistence, plus test tokens, forking,
-> and a built-in block explorer where the chain supports them. The CLI surface
-> may still change. See the [CHANGELOG](./CHANGELOG.md).
+> ⚠️ Early WIP. Six chains — EVM (Anvil), Starknet (starknet-devnet), Solana
+> (surfpool), Bitcoin + Litecoin (regtest), and zkSync (anvil-zksync) — boot by
+> default with funded accounts, a faucet, chain control, and persistence, plus
+> test tokens, forking, and a built-in block explorer where the chain supports
+> them. The CLI surface may still change. See the [CHANGELOG](./CHANGELOG.md).
 
-`wharfnet` is the local harbor for your chains: boot EVM, Solana, Starknet, and
-Bitcoin/Litecoin networks locally with a single command, fund accounts from a
-unified faucet, and get standard test tokens deployed at known addresses — then
-wire it straight into your integration tests and CI pipelines.
+`wharfnet` is the local harbor for your chains: boot EVM, Solana, Starknet,
+Bitcoin/Litecoin, and zkSync networks locally with a single command, fund
+accounts from a unified faucet, and get standard test tokens deployed at known
+addresses — then wire it straight into your integration tests and CI pipelines.
 
 ## Goals
 
@@ -24,9 +24,9 @@ and a Starknet devnet by hand — plus a homemade faucet and glue scripts — ev
 time they need a local environment. `wharfnet` packages that stitching into one
 opinionated, reproducible tool:
 
-- **One command, many chains.** `wharfnet up` boots EVM, Starknet, Solana, and
-  Bitcoin/Litecoin chains together, behind one config, one manifest, and one
-  `status`.
+- **One command, many chains.** `wharfnet up` boots EVM, Starknet, Solana,
+  Bitcoin/Litecoin, and zkSync chains together, behind one config, one manifest,
+  and one `status`.
 - **Batteries included.** Funded dev accounts, test tokens at fixed addresses, a
   unified faucet, chain-control cheats, mainnet forking, and a block explorer per
   chain — no glue scripts.
@@ -35,7 +35,7 @@ opinionated, reproducible tool:
   opt-in persistence when you want to pick up where you left off.
 - **Uniform surface across VMs.** The same verbs (`up`, `faucet`, per-chain
   control) work the same way whether the chain is EVM, Starknet, Solana, Bitcoin,
-  or Litecoin.
+  Litecoin, or zkSync.
 - **A test-utils library, not just a CLI.** Import `wharfnet::testkit` to read a
   running localnet's endpoints, funded accounts, and token addresses (plus
   embedded ABIs) straight into your Rust tests — no hard-coding.
@@ -55,6 +55,7 @@ All the chains are grouped under **[Chains](https://sainathr19.github.io/wharfne
 | **Solana** (`solana-1`)        | surfpool            | [/chains/solana](https://sainathr19.github.io/wharfnet/chains/solana)     |
 | **Bitcoin** (`bitcoin-1`)      | bitcoind (regtest)  | [/chains/bitcoin](https://sainathr19.github.io/wharfnet/chains/bitcoin)   |
 | **Litecoin** (`litecoin-1`)    | litecoind (regtest) | [/chains/litecoin](https://sainathr19.github.io/wharfnet/chains/litecoin) |
+| **zkSync** (`zksync-1`)        | anvil-zksync        | [/chains/zksync](https://sainathr19.github.io/wharfnet/chains/zksync)     |
 
 The site is a [Nextra](https://nextra.site) app under [`landing/`](landing/),
 deployed to GitHub Pages on every push to `main` (source pages live in
@@ -151,11 +152,11 @@ web3.js / starknet.js snippets alongside the Rust API.
 ## Configuration
 
 wharfnet runs zero-config — two Anvil chains, a Starknet chain, a Solana chain,
-and Bitcoin + Litecoin regtest chains by default (`anvil-1` :8545, `anvil-2`
-:8546, `starknet-1` :5050, `solana-1` :8899, `bitcoin-1` :18443, `litecoin-1`
-:19443). To customise the chain topology — including dropping a chain — write your
-own `wharfnet.toml` in your project root (a config replaces the defaults
-entirely):
+Bitcoin + Litecoin regtest chains, and a zkSync chain by default (`anvil-1` :8545,
+`anvil-2` :8546, `starknet-1` :5050, `solana-1` :8899, `bitcoin-1` :18443,
+`litecoin-1` :19443, `zksync-1` :8011). To customise the chain topology —
+including dropping a chain — write your own `wharfnet.toml` in your project root
+(a config replaces the defaults entirely):
 
 ```toml
 # wharfnet.toml — omit entirely for the built-in defaults
@@ -184,11 +185,17 @@ port = 18443
 name = "litecoin-1"
 kind = "litecoin"   # boots a litecoind regtest chain
 port = 19443
+
+[[chains]]
+name = "zksync-1"
+kind = "zksync"     # boots an anvil-zksync chain
+port = 8011
 ```
 
 Each chain needs a unique `name` and `port`; `kind` defaults to `evm` and may be
-`starknet`, `solana`, `bitcoin`, or `litecoin`. EVM chains also need a numeric
-`chain_id`; the others omit it. Accounts and test tokens come from the baked
+`starknet`, `solana`, `bitcoin`, `litecoin`, or `zksync`. EVM chains need a
+numeric `chain_id`; the others omit it (zkSync accepts an optional one,
+defaulting to anvil-zksync's 260). Accounts and test tokens come from the baked
 presets and aren't configured here. Run `wharfnet compose` to see the resolved
 setup — and to catch config errors — without booting anything.
 

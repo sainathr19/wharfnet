@@ -4,5 +4,6 @@ export default {
   solana: 'Solana',
   starknet: 'Starknet',
   bitcoin: 'Bitcoin',
-  litecoin: 'Litecoin'
+  litecoin: 'Litecoin',
+  zksync: 'zkSync'
 }
