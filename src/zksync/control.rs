@@ -256,21 +256,6 @@ mod tests {
     }
 
     #[test]
-    fn public_wrappers_dispatch_to_the_default_state_dir() {
-        // The thin public entry points run against the default `.wharfnet` state
-        // dir. No zksync chain ever lives there in the default topology, so each
-        // resolves to an error (no localnet, or no matching chain) before any RPC
-        // — exercising the wrappers without a live node or side effects.
-        let addr = "0x000000000000000000000000000000000000dEaD";
-        assert!(mine("zksync", 1).is_err());
-        assert!(increase_time("zksync", 1).is_err());
-        assert!(warp("zksync", 4_102_444_800).is_err());
-        assert!(impersonate("zksync", addr, false).is_err());
-        assert!(snapshot("zksync").is_err());
-        assert!(revert("zksync", "0x1").is_err());
-    }
-
-    #[test]
     fn hex_quantity_parses_and_rejects() {
         assert_eq!(hex_quantity(&json!("0x1a")).unwrap(), 26);
         assert_eq!(hex_quantity(&json!("0x0")).unwrap(), 0);

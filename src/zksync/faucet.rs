@@ -87,7 +87,10 @@ mod tests {
         ChainEntry {
             name: "zksync-1".into(),
             kind: "zksync".into(),
-            rpc: "http://127.0.0.1:8011".into(),
+            // Port 1 has nothing listening, so any path that actually reaches the
+            // RPC fails at connect — deterministic even if a real localnet is up
+            // on the default port. These tests only assert pre-RPC behaviour.
+            rpc: "http://127.0.0.1:1".into(),
             ws: None,
             chain_id: "260".into(),
             accounts: vec![],
