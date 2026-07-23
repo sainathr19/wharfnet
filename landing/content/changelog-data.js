@@ -10,7 +10,7 @@ export const entries = [
     title: 'zkSync chain',
     changes: [
       'A zkSync chain (`zksync-1`, `:8011`) now boots **by default**, running Matter Labs\' [`anvil-zksync`](https://github.com/matter-labs/anvil-zksync) in-memory node (the EraVM analogue of Anvil) from a pinned image, at chain id `260`. Selectable via `kind = "zksync"` in `wharfnet.toml`.',
-      'anvil-zksync funds the standard Anvil test-mnemonic accounts (10,000 ETH each), recorded in the manifest. Its image ships no `cast`, so chain control and the faucet drive the node over a dependency-free JSON-RPC client rather than exec-ing a CLI inside the container. Persistence works via `--state` (`session-<chain>.json`), like the other chains.',
+      'anvil-zksync funds the standard Anvil test-mnemonic accounts (10,000 ETH each), recorded in the manifest. Its image ships no `cast`, so chain control and the faucet drive the node over a dependency-free JSON-RPC client rather than exec-ing a CLI inside the container. zkSync chains are ephemeral for now — `up --resume` boots them fresh (persistence is planned).',
     ],
   },
   {

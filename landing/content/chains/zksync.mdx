@@ -125,8 +125,15 @@ JSON-RPC (`eth_getBlockByNumber`, `eth_getTransactionReceipt`, …).
 
 ## Persistence
 
-zkSync chains persist across `up --resume` / `up --reset` like the other chains:
-anvil-zksync dumps its state to a per-chain `session-<chain>.json` under
-`.wharfnet/state/` (via `--state`, flushed on an interval), reloaded on the next
-`--resume`. See [Resuming a session](/getting-started#resuming-a-session) for the
-shared model.
+<Callout type="info">
+  zkSync chains are **ephemeral for now** — persistence is planned (TODO). Unlike
+  the other chains, a zkSync chain does **not** save its state across restarts:
+  `wharfnet up --resume` boots it fresh (the rest of the topology still resumes
+  normally). anvil-zksync's `--state` errors when the snapshot file is missing
+  (it has no load-if-present mode) and doesn't dump on container stop, so it can't
+  yet back wharfnet's seedless resume flow.
+</Callout>
+
+Every boot starts from the funded dev accounts described above. See
+[Resuming a session](/getting-started#resuming-a-session) for how the other
+chains persist.

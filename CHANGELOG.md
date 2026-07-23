@@ -31,9 +31,10 @@ surface may still change.
     `increase-time`, `warp`, `impersonate`, and `snapshot`/`revert`.
   - **Forking** — a live zkSync network can be forked via `fork_url` (+ optional
     `fork_block`), using anvil-zksync's `fork` subcommand.
-  - **Persistence** — `up --resume` dumps per-chain state to
-    `.wharfnet/state/session-<chain>.json` (via `--state`), reloaded on the next
-    resume; `up --reset` wipes it and a default `up` stays ephemeral.
+  - **Persistence** — not yet supported; zkSync chains are ephemeral, so
+    `up --resume` boots them fresh (the rest of the topology still resumes).
+    anvil-zksync's `--state` errors on a missing snapshot and doesn't dump on
+    container stop, so the seedless resume flow can't back it yet. Planned.
 
 ## [0.1.0-alpha.1] - 2026-07-20
 

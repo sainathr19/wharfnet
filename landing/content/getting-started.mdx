@@ -98,7 +98,8 @@ To pick up where you left off:
 
 Each chain persists to a per-chain session under `.wharfnet/state/` that it
 reloads on the next `--resume`; the exact mechanism per chain kind is documented
-in the per-chain guides. `--resume` and `--reset` are mutually exclusive.
+in the per-chain guides. `--resume` and `--reset` are mutually exclusive. (zkSync
+is the exception — it's ephemeral for now, so `--resume` boots it fresh.)
 
 ## Configuration
 

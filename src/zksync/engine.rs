@@ -17,11 +17,6 @@ pub(crate) const ZKSYNC_INTERNAL_PORT: u16 = 8011;
 /// anvil-zksync's default chain id, used when a `wharfnet.toml` chain omits one.
 pub(crate) const ZKSYNC_DEFAULT_CHAIN_ID: u64 = 260;
 
-/// How often the node flushes its state to disk in persistent mode (seconds). A
-/// small interval keeps the on-disk session close to live so little is lost if
-/// the process is killed rather than shut down gracefully.
-const ZKSYNC_STATE_INTERVAL_SECS: u16 = 5;
-
 /// Pinned anvil-zksync image. Ubuntu-based, entrypoint `anvil-zksync`, serving on
 /// 8011 — see `resources/docker/services/zksync.yml`.
 const ZKSYNC_IMAGE: &str = "ghcr.io/matter-labs/anvil-zksync:v0.6.11";
@@ -69,13 +64,6 @@ impl ZkSyncEngine {
         self
     }
 
-    /// Path (relative to the state dir) of this chain's persistent session
-    /// snapshot. Named `session-<chain>.json` so the orchestrator's session
-    /// tracking (resume/reset) picks it up like the Anvil/devnet snapshots.
-    fn session_rel_path(&self) -> String {
-        format!("state/session-{}.json", self.name)
-    }
-
     /// Funded dev accounts. anvil-zksync funds the standard Anvil test-mnemonic
     /// accounts by default (mnemonic "test test test test test test test test
     /// test test test junk"), so these are identical to the EVM chains' accounts
@@ -113,21 +101,16 @@ impl Engine for ZkSyncEngine {
         self.host_port
     }
 
-    fn compose_service(&self, mode: StateMode) -> String {
-        // Ephemeral: start fresh in-memory every boot (no baked token snapshot
-        // yet). Persistent: `--state` loads the session snapshot if present and
-        // dumps back to it on exit and every interval, so a crash-restart resumes.
-        // Each optional arg group is leading-comma so it can collapse to nothing.
-        let state_args = match mode {
-            StateMode::Ephemeral => String::new(),
-            StateMode::Persistent => format!(
-                r#", "--state", "/{session}", "--state-interval", "{interval}""#,
-                session = self.session_rel_path(),
-                interval = ZKSYNC_STATE_INTERVAL_SECS,
-            ),
-        };
-        // Global options (--port/--chain-id/--state) precede the subcommand; a
-        // plain chain boots with `run`, a fork with `fork --fork-url …`.
+    fn compose_service(&self, _mode: StateMode) -> String {
+        // zkSync chains are ephemeral for now, in both fresh and persistent modes:
+        // anvil-zksync's `--state` errors when the snapshot file is missing (it
+        // has no load-if-present mode) and doesn't dump on container stop, so it
+        // can't back wharfnet's seedless resume flow. `up --resume` therefore
+        // boots the zkSync chain fresh rather than failing. Persistence is tracked
+        // as a follow-up; `_mode` is accepted to satisfy the `Engine` trait.
+        //
+        // Global options (--port/--chain-id) precede the subcommand; a plain chain
+        // boots with `run`, a fork with `fork --fork-url …`.
         let (subcommand, fork_args) = match &self.fork {
             None => ("run", String::new()),
             Some(fork) => {
@@ -144,7 +127,6 @@ impl Engine for ZkSyncEngine {
             .replace("{{PORT}}", &ZKSYNC_INTERNAL_PORT.to_string())
             .replace("{{CHAIN_ID}}", &self.chain_id.to_string())
             .replace("{{HOST_PORT}}", &self.host_port.to_string())
-            .replace("{{STATE_ARGS}}", &state_args)
             .replace("{{SUBCOMMAND}}", subcommand)
             .replace("{{FORK_ARGS}}", &fork_args)
     }
@@ -207,24 +189,20 @@ mod tests {
     }
 
     #[test]
-    fn ephemeral_compose_boots_run_without_state() {
-        let yaml = ZkSyncEngine::new("zksync-1", 8011, 260).compose_service(StateMode::Ephemeral);
-        assert!(yaml.contains("\"run\""));
-        // Match the quoted arg token, not the word in the template comment.
-        assert!(
-            !yaml.contains("\"--state\""),
-            "ephemeral must not persist state: {yaml}"
-        );
-        // The whole state dir is mounted so persistent runs can write dumps.
-        assert!(yaml.contains("./state:/state"));
-    }
-
-    #[test]
-    fn persistent_compose_loads_and_dumps_a_session_snapshot() {
-        let yaml = ZkSyncEngine::new("zksync-1", 8011, 260).compose_service(StateMode::Persistent);
-        assert!(yaml.contains("\"--state\", \"/state/session-zksync-1.json\""));
-        assert!(yaml.contains("\"--state-interval\", \"5\""));
-        assert!(yaml.contains("\"run\""));
+    fn compose_boots_run_without_state_in_both_modes() {
+        // zkSync is ephemeral for now: neither mode adds anvil-zksync's `--state`
+        // (it errors on a missing snapshot and can't back the seedless resume
+        // flow), so `up --resume` boots the chain fresh instead of failing.
+        for mode in [StateMode::Ephemeral, StateMode::Persistent] {
+            let yaml = ZkSyncEngine::new("zksync-1", 8011, 260).compose_service(mode);
+            assert!(yaml.contains("\"run\""));
+            // Match the quoted arg token, not the word in the template comment.
+            assert!(
+                !yaml.contains("\"--state\""),
+                "zksync must not use --state (ephemeral only): {yaml}"
+            );
+            assert!(!yaml.contains("session-zksync-1.json"));
+        }
     }
 
     #[test]
@@ -249,8 +227,7 @@ mod tests {
             .compose_service(StateMode::Persistent);
         assert!(yaml.contains("\"--fork-url\", \"https://rpc.example/key\""));
         assert!(!yaml.contains("--fork-block-number"), "no block was pinned");
-        // Persistence still layers on top of the fork.
-        assert!(yaml.contains("\"--state\", \"/state/session-zk-fork.json\""));
+        assert!(yaml.contains("\"fork\""));
     }
 
     #[test]
