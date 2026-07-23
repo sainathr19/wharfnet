@@ -1,0 +1,25 @@
+  {{NAME}}:
+    image: {{IMAGE}}
+    # ltc-rpc-explorer is a maintained Litecoin fork of btc-rpc-explorer (same
+    # server-side RPC, no indexer/DB). Two differences from the Bitcoin service:
+    # its config uses the `LTCEXP_LITECOIND_*` env prefix (not `BTCEXP_BITCOIND_*`),
+    # and the image is amd64-only, so it's pinned to `linux/amd64` and runs under
+    # emulation on arm64 hosts. It reaches litecoind over the docker network via
+    # the chain's service name + internal RPC port; login is disabled and rate
+    # lookups are off (no outbound network on a regtest box). `RPC_ALLOWALL` lifts
+    # the default RPC blacklist so regtest wallet/mining calls work. Its web UI
+    # listens on 3002, published on the host.
+    platform: linux/amd64
+    environment:
+      - "LTCEXP_HOST=0.0.0.0"
+      - "LTCEXP_PORT=3002"
+      - "LTCEXP_LITECOIND_HOST={{RPC_SERVICE}}"
+      - "LTCEXP_LITECOIND_PORT={{RPC_PORT}}"
+      - "LTCEXP_LITECOIND_USER={{RPC_USER}}"
+      - "LTCEXP_LITECOIND_PASS={{RPC_PASS}}"
+      - "LTCEXP_BASIC_AUTH_PASSWORD="
+      - "LTCEXP_NO_RATES=true"
+      - "LTCEXP_RPC_ALLOWALL=true"
+    ports:
+      - "{{HOST_PORT}}:3002"
+    restart: unless-stopped

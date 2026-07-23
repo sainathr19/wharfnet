@@ -5,6 +5,15 @@ export const categories = ['Solana', 'Starknet', 'EVM', 'UTXO', 'Core']
 
 export const entries = [
   {
+    date: 'July 23, 2026',
+    category: 'UTXO',
+    title: 'Litecoin block explorer',
+    changes: [
+      'Litecoin chains now boot an **ltc-rpc-explorer** by default (`up --bare` to skip), completing UTXO explorer parity with Bitcoin — a maintained Litecoin fork of btc-rpc-explorer with the same design (straight to `litecoind` over RPC, no indexer/DB). Its URL is advertised in the `status`/manifest.',
+      'The image is pinned by digest (the fork ships only a rolling `latest` tag) and is **amd64-only**, so it runs under `linux/amd64` — emulated on arm64 hosts (slower to boot; `up --bare` skips it).',
+    ],
+  },
+  {
     date: 'July 20, 2026',
     category: 'UTXO',
     tag: '#21',

@@ -31,10 +31,13 @@ pub enum ExplorerTarget {
         chain_name: String,
         rpc_host_port: u16,
     },
-    /// btc-rpc-explorer — a server-side app that makes RPC calls itself, over the
-    /// docker network, so it's wired to the chain's in-network service name +
-    /// *internal* RPC port and auth credentials.
-    BtcRpc {
+    /// A btc-rpc-explorer-family explorer (btc-rpc-explorer for Bitcoin, its
+    /// ltc-rpc-explorer fork for Litecoin) — a server-side app that makes RPC
+    /// calls itself over the docker network, so it's wired to the chain's
+    /// in-network service name + *internal* RPC port and auth credentials.
+    /// `coin` (`"bitcoin"`/`"litecoin"`) selects the image and env-var flavor.
+    UtxoRpc {
+        coin: &'static str,
         chain_name: String,
         rpc_service: String,
         rpc_port: u16,

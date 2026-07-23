@@ -10,6 +10,17 @@ surface may still change.
 
 ## [Unreleased]
 
+### Added
+
+- **Litecoin block explorer** — Litecoin chains now boot an [ltc-rpc-explorer]
+  alongside (on by default, skipped by `up --bare`), completing UTXO explorer
+  parity with Bitcoin. It's a maintained Litecoin fork of btc-rpc-explorer with
+  the same design — connects straight to `litecoind` over RPC, no electrs,
+  indexer, or database — and its URL is advertised in the `status`/manifest. The
+  image is pinned by digest (the fork only publishes a rolling `latest` tag) and
+  is **amd64-only**, so it's run under `linux/amd64` and is emulated on Apple
+  Silicon / other arm64 hosts (slower to boot; use `up --bare` to skip it).
+
 ## [0.1.0-alpha.1] - 2026-07-20
 
 ### Added
@@ -231,3 +242,4 @@ surface may still change.
 [Unreleased]: https://github.com/sainathr19/wharfnet/compare/v0.1.0-alpha.1...HEAD
 [0.1.0-alpha.1]: https://github.com/sainathr19/wharfnet/releases/tag/v0.1.0-alpha.1
 [btc-rpc-explorer]: https://github.com/janoside/btc-rpc-explorer
+[ltc-rpc-explorer]: https://hub.docker.com/r/techtoshi/ltc-rpc-explorer

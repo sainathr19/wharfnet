@@ -108,19 +108,29 @@ what you need with the faucet.
 
 ## Block explorer
 
-<Callout type="info">
-  A bundled Litecoin explorer is **planned (TODO)**, not yet shipped. The
-  btc-rpc-explorer that backs the Bitcoin chain is Bitcoin-only — its published
-  image carries no Litecoin coin config — so a Litecoin fork of it (e.g.
-  [`techtoshi/ltc-rpc-explorer`](https://hub.docker.com/r/techtoshi/ltc-rpc-explorer))
-  is the intended path to reach BTC/LTC explorer parity.
-</Callout>
+Each Litecoin chain serves a bundled
+[**ltc-rpc-explorer**](https://hub.docker.com/r/techtoshi/ltc-rpc-explorer) — a
+maintained Litecoin fork of the btc-rpc-explorer that backs the Bitcoin chain
+(the upstream image is Bitcoin-only), giving BTC/LTC explorer parity. Like its
+Bitcoin counterpart it makes its RPC calls **server-side**, reaching litecoind
+over the docker network via the chain's service name and internal RPC port.
+wharfnet publishes its UI on a host port assigned from `5100` upward, so in the
+default topology it lands on `:5103`; the exact URL is recorded in the manifest
+and printed by `status`:
 
-Until then Litecoin ships **no bundled explorer**: wharfnet advertises no explorer
-URL for `kind = "litecoin"` chains (the manifest omits the field, and `status`
-shows none). The RPC is fully functional in the meantime — inspect the chain over
-JSON-RPC (`getblock`, `gettransaction`, …) or point an external Litecoin explorer
-at `http://127.0.0.1:19443` if you need a UI.
+| Chain      | RPC                      | Explorer                 |
+| ---------- | ------------------------ | ------------------------ |
+| litecoin-1 | `http://127.0.0.1:19443` | `http://127.0.0.1:5103` |
+
+Pass `--bare` to skip it.
+
+<Callout type="warning">
+  The `techtoshi/ltc-rpc-explorer` image is published for **amd64 only** (and
+  pinned by digest, since it only carries a rolling `latest` tag). wharfnet runs
+  it under `linux/amd64`, so on Apple Silicon and other arm64 hosts it runs
+  emulated — it works, but boots slower. Use `--bare` to skip it if you don't
+  need the UI.
+</Callout>
 
 ## Persistence
 
