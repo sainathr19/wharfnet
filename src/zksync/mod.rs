@@ -10,4 +10,6 @@
 //!
 //! [`Engine`]: crate::runtime::engine::Engine
 
+pub mod control;
 pub mod engine;
+pub mod rpc;
