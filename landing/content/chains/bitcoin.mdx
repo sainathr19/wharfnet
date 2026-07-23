@@ -40,7 +40,7 @@ URL. Readiness is checked against an authed `getblockchaininfo`.
 Regtest starts with an empty chain and no spendable coins, so on first boot
 wharfnet creates a node wallet named `wharfnet` and mines **101 blocks** to a
 fresh address in it. Coinbase maturity in regtest is 100 blocks, so 101 blocks
-leaves exactly one mature coinbase — **50 BTC** — spendable straight away. That
+leaves exactly one mature coinbase — **50 BTC** — spendable immediately. That
 address and balance are recorded in the manifest as the chain's funded account
 (the UTXO analogue of Anvil's pre-funded keys).
 
@@ -92,7 +92,7 @@ wharfnet bitcoin mine 6      # mine 6 blocks to the boot wallet, e.g. to confirm
 ```
 
 `mine` calls `generatetoaddress` against the boot wallet, so the block rewards
-accrue to the funded account — handy for advancing confirmations or maturing more
+accrue to the funded account, advancing confirmations and maturing additional
 coinbase to spend.
 
 ## Forking

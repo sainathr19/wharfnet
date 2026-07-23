@@ -27,7 +27,7 @@ Every EVM chain boots with test tokens pre-deployed at fixed addresses
 (identical on all chains) from a baked-in Anvil state snapshot — no deploy step
 required. Each has a **public `mint(address,uint256)`** so a faucet (or your
 tests) can top up any address on demand. The first two are standard, well-behaved
-ERC-20s; the rest are deliberately **"weird"** for token-integration testing:
+ERC-20s; the rest are deliberately **non-standard** for token-integration testing:
 
 | Token | Decimals | Address | Behaviour |
 | ----- | -------- | ------- | --------- |
@@ -37,18 +37,18 @@ ERC-20s; the rest are deliberately **"weird"** for token-integration testing:
 | REB   | 18 | `0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9` | rebasing (`rebase(uint256)` rescales balances) |
 | NRT   | 6  | `0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9` | no return value (USDT-style `transfer`/`approve`) |
 
-The weird tokens let you check that your contracts and integrations handle
-real-world token quirks — amount-received ≠ amount-sent, balances that move with
-no transfer, and calls that don't return a decodable `bool`.
+The non-standard tokens let you verify that your contracts and integrations
+handle real-world token behaviour — amount-received ≠ amount-sent, balances that
+move with no transfer, and calls that don't return a decodable `bool`.
 
-The dev accounts start pre-seeded with a balance of each. Regenerate the
+The dev accounts are pre-seeded with a balance of each. Regenerate the
 snapshot after editing the token sources with `./scripts/gen-token-state.sh`.
 
 ## Canonical contracts
 
 Every EVM chain also boots with the infrastructure contracts that live at the
 **same address on every real chain**, so client libraries and deploy tooling
-that hardcode these addresses work out of the box — no per-chain wiring:
+that hardcode these addresses work without per-chain wiring:
 
 | Contract         | Address                                      | Used by |
 | ---------------- | -------------------------------------------- | ------- |
@@ -91,10 +91,10 @@ wharfnet evm snapshot                # prints an id, e.g. 0x1
 wharfnet evm revert 0x1              # roll state back to that snapshot
 ```
 
-`impersonate` lets you send transactions as **any** address with no private key
-(great with forked state), and `snapshot`/`revert` give tests a cheap reset
-point. These live under `evm` because they're Anvil-specific — other chain kinds
-get their own namespaces (`wharfnet starknet …`, `wharfnet solana …`).
+`impersonate` sends transactions as **any** address with no private key, which is
+useful against forked state; `snapshot`/`revert` give tests a state reset point.
+These live under `evm` because they are Anvil-specific — other chain kinds have
+their own namespaces (`wharfnet starknet …`, `wharfnet solana …`).
 
 ## Forking
 
@@ -134,8 +134,8 @@ cast call 0xA0b8…eB48 'symbol()(string)' --rpc-url http://127.0.0.1:8545   # -
 `wharfnet up` boots an [Otterscan](https://github.com/otterscan/otterscan)
 instance for each EVM chain by default — a lightweight, open-source block
 explorer. Anvil implements Otterscan's RPC API (`ots_*`), so the explorer needs
-no indexer or database — it's a static frontend talking straight to the chain.
-Each EVM chain gets its own Otterscan on a dedicated port:
+no indexer or database — it is a static frontend that queries the chain directly.
+Each EVM chain has its own Otterscan on a dedicated port:
 
 | Chain   | RPC                     | Explorer                |
 | ------- | ----------------------- | ----------------------- |
