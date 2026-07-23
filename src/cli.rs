@@ -801,6 +801,7 @@ mod tests {
         let evm = |c| Commands::Evm { command: c };
         let sn = |c| Commands::Starknet { command: c };
         let sol = |c| Commands::Solana { command: c };
+        let zks = |c| Commands::Zksync { command: c };
         let future = 4_102_444_800; // year 2100 — satisfies forward-only warps
 
         run(evm(EvmCommands::Mine {
@@ -894,6 +895,52 @@ mod tests {
             chain: "solana-1".into(),
         }))
         .expect("solana resume-clock");
+
+        // zkSync: the full EVM verb set — mine, increase-time, warp, impersonate
+        // (+stop), snapshot, revert — driven through the public dispatch.
+        run(zks(ZksyncCommands::Mine {
+            count: 2,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync mine");
+        run(zks(ZksyncCommands::IncreaseTime {
+            seconds: 60,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync increase-time");
+        run(zks(ZksyncCommands::Warp {
+            timestamp: future,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync warp");
+        run(zks(ZksyncCommands::Impersonate {
+            address: "0x0000000000000000000000000000000000000002".into(),
+            stop: false,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync impersonate");
+        run(zks(ZksyncCommands::Impersonate {
+            address: "0x0000000000000000000000000000000000000002".into(),
+            stop: true,
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync stop impersonate");
+        run(zks(ZksyncCommands::Snapshot {
+            chain: "zksync-1".into(),
+        }))
+        .expect("zksync snapshot");
+        let _ = run(zks(ZksyncCommands::Revert {
+            id: "0x1".into(),
+            chain: "zksync-1".into(),
+        }));
+        run(Commands::Faucet {
+            chain: "zksync-1".into(),
+            address: "0x0000000000000000000000000000000000000abc".into(),
+            amount: "10".into(),
+            token: None,
+            raw: false,
+        })
+        .expect("zksync faucet");
 
         // Faucet (native + tokens) and logs, both through the dispatch.
         run(Commands::Faucet {

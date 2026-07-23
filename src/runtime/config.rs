@@ -3,8 +3,8 @@
 //! When a `wharfnet.toml` is present in the working directory it defines the
 //! chain topology — which chains to boot and their ports, chain IDs, and block
 //! times. Without one, the built-in defaults are used (two Anvil EVM chains, a
-//! Starknet chain, a Solana chain, and Bitcoin + Litecoin regtest chains), so
-//! wharfnet stays zero-config.
+//! Starknet chain, a Solana chain, Bitcoin + Litecoin regtest chains, and a
+//! zkSync chain), so wharfnet stays zero-config.
 //!
 //! Accounts and test tokens are not configurable here: they come from each
 //! engine's baked state (see the per-kind `engine.rs`).
@@ -156,6 +156,16 @@ impl Default for Config {
                     name: "litecoin-1".to_string(),
                     kind: "litecoin".to_string(),
                     port: 19443,
+                    chain_id: None,
+                    block_time: 1,
+                    fork_url: None,
+                    fork_block: None,
+                },
+                ChainConfig {
+                    name: "zksync-1".to_string(),
+                    kind: "zksync".to_string(),
+                    port: 8011,
+                    // zksync uses anvil-zksync's default chain id (260).
                     chain_id: None,
                     block_time: 1,
                     fork_url: None,
@@ -381,9 +391,9 @@ mod tests {
     }
 
     #[test]
-    fn default_is_two_anvil_a_starknet_a_solana_and_two_utxo_chains() {
+    fn default_is_two_anvil_a_starknet_a_solana_two_utxo_and_a_zksync_chain() {
         let c = Config::default();
-        assert_eq!(c.chains.len(), 6);
+        assert_eq!(c.chains.len(), 7);
         assert_eq!(c.chains[0].name, "anvil-1");
         assert_eq!(c.chains[0].port, 8545);
         assert_eq!(c.chains[1].chain_id.as_deref(), Some("31338"));
@@ -406,13 +416,19 @@ mod tests {
         assert_eq!(c.chains[5].kind, "litecoin");
         assert_eq!(c.chains[5].port, 19443);
         assert!(c.chains[5].chain_id.is_none());
+        // The zkSync chain is on by default too; it uses anvil-zksync's default
+        // chain id, so it carries none here.
+        assert_eq!(c.chains[6].name, "zksync-1");
+        assert_eq!(c.chains[6].kind, "zksync");
+        assert_eq!(c.chains[6].port, 8011);
+        assert!(c.chains[6].chain_id.is_none());
     }
 
     #[test]
     fn missing_file_yields_defaults() {
         let dir = tempdir().unwrap();
         let c = load_from(&dir.path().join(CONFIG_FILE)).unwrap();
-        assert_eq!(c.chains.len(), 6);
+        assert_eq!(c.chains.len(), 7);
     }
 
     #[test]

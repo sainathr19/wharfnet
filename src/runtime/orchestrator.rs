@@ -810,7 +810,8 @@ mod tests {
     use tempfile::tempdir;
 
     /// The default engine set (two Anvil chains, one Starknet chain, one Solana
-    /// chain, and Bitcoin + Litecoin regtest chains), with explorers off — the
+    /// chain, Bitcoin + Litecoin regtest chains, and a zkSync chain), with
+    /// explorers off — the
     /// generic checks don't care about the `--ui` flag; the tests that do build
     /// their own engine set with it enabled.
     fn engines() -> Vec<Box<dyn Engine>> {
@@ -828,6 +829,7 @@ mod tests {
         assert!(out.contains("solana-1:"));
         assert!(out.contains("bitcoin-1:"));
         assert!(out.contains("litecoin-1:"));
+        assert!(out.contains("zksync-1:"));
     }
 
     #[test]
@@ -1047,13 +1049,14 @@ mod tests {
     #[test]
     fn engines_returns_default_set() {
         let engines = engines();
-        assert_eq!(engines.len(), 6);
+        assert_eq!(engines.len(), 7);
         assert_eq!(engines[0].name(), "anvil-1");
         assert_eq!(engines[1].name(), "anvil-2");
         assert_eq!(engines[2].name(), "starknet-1");
         assert_eq!(engines[3].name(), "solana-1");
         assert_eq!(engines[4].name(), "bitcoin-1");
         assert_eq!(engines[5].name(), "litecoin-1");
+        assert_eq!(engines[6].name(), "zksync-1");
     }
 
     #[test]
@@ -1064,7 +1067,7 @@ mod tests {
             .iter()
             .map(|e| e.manifest_entry().chain_id)
             .collect();
-        assert_eq!(ports, vec![8545, 8546, 5050, 8899, 18443, 19443]);
+        assert_eq!(ports, vec![8545, 8546, 5050, 8899, 18443, 19443, 8011]);
         assert_eq!(
             chain_ids,
             vec![
@@ -1073,13 +1076,14 @@ mod tests {
                 "0x534e5f5345504f4c4941",
                 "localnet",
                 "regtest",
-                "regtest"
+                "regtest",
+                "260"
             ]
         );
         // No two chains may share a host port or the compose file won't bind.
         assert_eq!(
             ports.iter().collect::<std::collections::HashSet<_>>().len(),
-            6
+            7
         );
     }
 
