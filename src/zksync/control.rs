@@ -111,11 +111,7 @@ fn warp_in(base: &Path, selector: &str, timestamp: u64) -> Result<()> {
         // Pin the next block's timestamp, then mine it.
         rpc::call(c, "evm_setNextBlockTimestamp", json!([timestamp]))?;
         rpc::call(c, "evm_mine", json!([]))?;
-        println!(
-            "  {}: warped to timestamp {}",
-            c.name,
-            block_timestamp(c)?
-        );
+        println!("  {}: warped to timestamp {}", c.name, block_timestamp(c)?);
         Ok(())
     })
 }
@@ -307,7 +303,11 @@ mod tests {
         // mines on demand, so no auto-mining slips extra blocks in).
         let start = block_number(chain).unwrap();
         mine_in(base, name, 5).unwrap();
-        assert_eq!(block_number(chain).unwrap(), start + 5, "mine 5 → +5 blocks");
+        assert_eq!(
+            block_number(chain).unwrap(),
+            start + 5,
+            "mine 5 → +5 blocks"
+        );
 
         // snapshot / revert: mark, move past it, then roll back to the mark.
         let id = rpc::call(chain, "evm_snapshot", json!([])).unwrap();

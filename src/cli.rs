@@ -635,8 +635,8 @@ mod tests {
             } if chain == "zksync"
         ));
 
-        let cli =
-            Cli::try_parse_from(["wharfnet", "zksync", "mine", "7", "--chain", "zksync-1"]).unwrap();
+        let cli = Cli::try_parse_from(["wharfnet", "zksync", "mine", "7", "--chain", "zksync-1"])
+            .unwrap();
         assert!(matches!(
             cli.command,
             Commands::Zksync {

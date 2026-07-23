@@ -311,6 +311,10 @@ mod tests {
     #[test]
     fn no_explorer_target_yet() {
         // Otterscan speaks EVM bytecode, not EraVM, so no bundled explorer.
-        assert!(ZkSyncEngine::new("zksync-1", 8011, 260).explorer_target().is_none());
+        assert!(
+            ZkSyncEngine::new("zksync-1", 8011, 260)
+                .explorer_target()
+                .is_none()
+        );
     }
 }

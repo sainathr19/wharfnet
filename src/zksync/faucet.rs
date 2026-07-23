@@ -72,7 +72,9 @@ fn fund_eth(chain: &ChainEntry, address: &str, amount: &str, raw: bool) -> Resul
 /// The address's current ETH balance in wei, via `eth_getBalance`.
 fn eth_balance_wei(chain: &ChainEntry, address: &str) -> Result<u128> {
     let res = rpc::call(chain, "eth_getBalance", json!([address, "latest"]))?;
-    let s = res.as_str().context("eth_getBalance did not return a string")?;
+    let s = res
+        .as_str()
+        .context("eth_getBalance did not return a string")?;
     let hex = s.strip_prefix("0x").unwrap_or(s);
     u128::from_str_radix(hex, 16).with_context(|| format!("parsing balance '{s}'"))
 }
@@ -140,9 +142,15 @@ mod tests {
 
         // Fund is additive: two top-ups accumulate.
         fund_chain(chain, recipient, "100", None, false).unwrap();
-        assert_eq!(eth_balance_wei(chain, recipient).unwrap(), 100 * WEI_PER_ETH);
+        assert_eq!(
+            eth_balance_wei(chain, recipient).unwrap(),
+            100 * WEI_PER_ETH
+        );
         fund_chain(chain, recipient, "25", None, false).unwrap();
-        assert_eq!(eth_balance_wei(chain, recipient).unwrap(), 125 * WEI_PER_ETH);
+        assert_eq!(
+            eth_balance_wei(chain, recipient).unwrap(),
+            125 * WEI_PER_ETH
+        );
 
         // A --raw amount is taken as exact base units (wei).
         fund_chain(chain, recipient, "1", None, true).unwrap();

@@ -237,7 +237,10 @@ mod tests {
     fn post_errors_when_nothing_is_listening() {
         // Port 1 has nothing bound, so the connect fails.
         let err = post(&chain_on(1), "{}").unwrap_err();
-        assert!(err.to_string().contains("connecting to anvil-zksync"), "{err}");
+        assert!(
+            err.to_string().contains("connecting to anvil-zksync"),
+            "{err}"
+        );
     }
 
     #[test]
