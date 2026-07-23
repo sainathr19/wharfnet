@@ -1,0 +1,12 @@
+  {{NAME}}:
+    image: {{IMAGE}}
+    entrypoint: ["anvil-zksync"]
+    # Global options (--port/--chain-id/--state) precede the run/fork subcommand;
+    # fork options follow it. Each optional group is leading-comma so it can
+    # collapse to nothing.
+    command: ["--port", "{{PORT}}", "--chain-id", "{{CHAIN_ID}}"{{STATE_ARGS}}, "{{SUBCOMMAND}}"{{FORK_ARGS}}]
+    ports:
+      - "{{HOST_PORT}}:{{PORT}}"
+    volumes:
+      - "./state:/state"
+    restart: unless-stopped

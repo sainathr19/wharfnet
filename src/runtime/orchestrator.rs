@@ -23,6 +23,7 @@ use crate::evm::engine::EvmEngine;
 use crate::solana::engine::SolanaEngine;
 use crate::starknet::engine::StarknetEngine;
 use crate::utxo::engine::{BITCOIN, LITECOIN, UtxoEngine};
+use crate::zksync::engine::{ZKSYNC_DEFAULT_CHAIN_ID, ZkSyncEngine};
 use serde::Serialize;
 
 pub(crate) const DEFAULT_PROJECT: &str = "wharfnet";
@@ -127,6 +128,24 @@ fn engine_for(c: &config::ChainConfig, explorer: bool) -> Box<dyn Engine> {
         // params differ. Regtest, no fork (config rejects fork_url for them).
         "bitcoin" => Box::new(UtxoEngine::new(BITCOIN, &c.name, c.port)),
         "litecoin" => Box::new(UtxoEngine::new(LITECOIN, &c.name, c.port)),
+        "zksync" => {
+            // A chain_id is optional for zksync; fall back to anvil-zksync's own
+            // default (260) when omitted. validate() guarantees any provided id is
+            // numeric, so the parse can't realistically fail.
+            let chain_id = c
+                .chain_id
+                .as_deref()
+                .map(|id| {
+                    id.parse::<u64>()
+                        .expect("validate() guarantees a numeric zksync chain_id")
+                })
+                .unwrap_or(ZKSYNC_DEFAULT_CHAIN_ID);
+            let mut engine = ZkSyncEngine::new(&c.name, c.port, chain_id);
+            if let Some(url) = &c.fork_url {
+                engine = engine.fork(url.clone(), c.fork_block);
+            }
+            Box::new(engine)
+        }
         other => unreachable!("validate() rejects unsupported kind '{other}'"),
     }
 }
@@ -1062,6 +1081,55 @@ mod tests {
             ports.iter().collect::<std::collections::HashSet<_>>().len(),
             6
         );
+    }
+
+    #[test]
+    fn engine_for_builds_a_zksync_chain_from_config() {
+        // A zksync chain with no chain_id falls back to anvil-zksync's default,
+        // and its service renders with the `run` subcommand.
+        let config = Config {
+            chains: vec![config::ChainConfig {
+                name: "zksync-1".into(),
+                kind: "zksync".into(),
+                port: 8011,
+                chain_id: None,
+                block_time: 1,
+                fork_url: None,
+                fork_block: None,
+            }],
+        };
+        let engines = engines_for(&config, false);
+        assert_eq!(engines.len(), 1);
+        assert_eq!(engines[0].name(), "zksync-1");
+        let entry = engines[0].manifest_entry();
+        assert_eq!(entry.kind, "zksync");
+        // Falls back to anvil-zksync's default chain id.
+        assert_eq!(entry.chain_id, "260");
+
+        let out = render_compose(&engines, StateMode::Ephemeral, &[]);
+        assert!(out.contains("zksync-1:"));
+        assert!(out.contains("ghcr.io/matter-labs/anvil-zksync"));
+        assert!(out.contains("\"run\""));
+    }
+
+    #[test]
+    fn engine_for_builds_a_forked_zksync_chain() {
+        let config = Config {
+            chains: vec![config::ChainConfig {
+                name: "zk-fork".into(),
+                kind: "zksync".into(),
+                port: 8011,
+                chain_id: Some("300".into()),
+                block_time: 1,
+                fork_url: Some("https://rpc.example/key".into()),
+                fork_block: Some(42),
+            }],
+        };
+        let out = render_compose(&engines_for(&config, false), StateMode::Ephemeral, &[]);
+        assert!(out.contains("\"fork\""));
+        assert!(out.contains("\"--fork-url\", \"https://rpc.example/key\""));
+        assert!(out.contains("\"--fork-block-number\", \"42\""));
+        assert!(out.contains("\"--chain-id\", \"300\""));
     }
 
     #[test]

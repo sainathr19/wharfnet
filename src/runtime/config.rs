@@ -327,8 +327,24 @@ fn validate(config: &Config) -> Result<()> {
                     );
                 }
             }
+            "zksync" => {
+                // anvil-zksync uses its own default chain id (260) when none is
+                // given, so a chain_id is optional (like Starknet/Solana); if one
+                // is set it must be numeric, mirroring the EVM check. Forking is
+                // supported via the `fork` subcommand — `fork_url` and a
+                // `fork_block` pin (`--fork-block-number`) are both honored, so the
+                // shared fork fields need no extra restriction here.
+                if let Some(id) = c.chain_id.as_deref() {
+                    id.parse::<u64>().map_err(|_| {
+                        anyhow::anyhow!(
+                            "chain '{}': chain_id '{id}' must be a number for a zksync chain",
+                            c.name
+                        )
+                    })?;
+                }
+            }
             other => bail!(
-                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet, solana, bitcoin, litecoin)",
+                "chain '{}': kind '{other}' is not supported yet (supported: evm, starknet, solana, bitcoin, litecoin, zksync)",
                 c.name
             ),
         }
@@ -716,6 +732,71 @@ mod tests {
             err.to_string().contains("cannot pin a Solana fork"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn accepts_zksync_kind_with_and_without_a_chain_id() {
+        let dir = tempdir().unwrap();
+        // No chain_id: anvil-zksync falls back to its default (260).
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "zksync-1"
+            kind = "zksync"
+            port = 8011
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].kind, "zksync");
+        assert!(c.chains[0].chain_id.is_none());
+
+        // An explicit numeric chain_id is accepted and stored as a string.
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "zksync-1"
+            kind = "zksync"
+            port = 8011
+            chain_id = 320
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(c.chains[0].chain_id.as_deref(), Some("320"));
+    }
+
+    #[test]
+    fn zksync_rejects_a_non_numeric_chain_id() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            "[[chains]]\nname = \"zksync-1\"\nkind = \"zksync\"\nport = 8011\nchain_id = \"SN_MAIN\"\n",
+        );
+        let err = load_from(&path).unwrap_err();
+        assert!(err.to_string().contains("must be a number"), "{err}");
+    }
+
+    #[test]
+    fn zksync_accepts_fork_fields() {
+        let dir = tempdir().unwrap();
+        let path = write(
+            &dir,
+            r#"
+            [[chains]]
+            name = "zksync-fork"
+            kind = "zksync"
+            port = 8011
+            fork_url = "https://rpc.example/key"
+            fork_block = 12345
+            "#,
+        );
+        let c = load_from(&path).unwrap();
+        assert_eq!(
+            c.chains[0].fork_url.as_deref(),
+            Some("https://rpc.example/key")
+        );
+        assert_eq!(c.chains[0].fork_block, Some(12345));
     }
 
     #[test]
