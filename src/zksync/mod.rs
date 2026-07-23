@@ -12,4 +12,5 @@
 
 pub mod control;
 pub mod engine;
+pub mod faucet;
 pub mod rpc;
