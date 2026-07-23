@@ -136,6 +136,8 @@ pub(crate) fn call(chain: &ChainEntry, method: &str, params: Value) -> Result<Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+    use std::thread;
 
     #[test]
     fn dechunk_reassembles_a_chunked_body() {
@@ -146,5 +148,121 @@ mod tests {
         let json = r#"{"jsonrpc":"2.0","id":1,"result":"0x104"}"#;
         let chunked = format!("{:x}\r\n{json}\r\n0\r\n\r\n", json.len());
         assert_eq!(dechunk(&chunked).unwrap(), json);
+    }
+
+    /// Serve one connection with a fixed raw HTTP response, returning the port.
+    fn spawn_mock(response: &'static str) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        port
+    }
+
+    fn chain_on(port: u16) -> ChainEntry {
+        ChainEntry {
+            name: "zksync-1".into(),
+            kind: "zksync".into(),
+            rpc: format!("http://127.0.0.1:{port}"),
+            ws: None,
+            chain_id: "260".into(),
+            accounts: vec![],
+            tokens: vec![],
+            contracts: vec![],
+            fork: None,
+            explorer: None,
+        }
+    }
+
+    fn ok_response(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[test]
+    fn post_returns_the_body_on_200() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":"0x104"}"#;
+        let resp: &'static str = Box::leak(ok_response(body).into_boxed_str());
+        let port = spawn_mock(resp);
+        assert_eq!(post(&chain_on(port), "{}").unwrap(), body);
+    }
+
+    #[test]
+    fn post_errors_on_a_non_200() {
+        let port = spawn_mock("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n");
+        let err = post(&chain_on(port), "{}").unwrap_err();
+        assert!(err.to_string().contains("rpc call failed"), "{err}");
+    }
+
+    #[test]
+    fn post_decodes_a_chunked_body() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"result":"0x2a"}"#;
+        let resp: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n{json}\r\n0\r\n\r\n",
+                json.len()
+            )
+            .into_boxed_str(),
+        );
+        let port = spawn_mock(resp);
+        assert_eq!(post(&chain_on(port), "{}").unwrap(), json);
+    }
+
+    #[test]
+    fn post_surfaces_a_jsonrpc_error_with_detail() {
+        let body = r#"{"error":{"message":"reverted","data":"out of gas"}}"#;
+        let resp: &'static str = Box::leak(ok_response(body).into_boxed_str());
+        let port = spawn_mock(resp);
+        let err = post(&chain_on(port), "{}").unwrap_err();
+        assert!(err.to_string().contains("reverted: out of gas"), "{err}");
+    }
+
+    #[test]
+    fn post_surfaces_a_jsonrpc_error_without_detail() {
+        let body = r#"{"error":{"message":"boom"}}"#;
+        let resp: &'static str = Box::leak(ok_response(body).into_boxed_str());
+        let port = spawn_mock(resp);
+        let err = post(&chain_on(port), "{}").unwrap_err();
+        assert!(err.to_string().contains("boom"), "{err}");
+    }
+
+    #[test]
+    fn post_errors_when_nothing_is_listening() {
+        // Port 1 has nothing bound, so the connect fails.
+        let err = post(&chain_on(1), "{}").unwrap_err();
+        assert!(err.to_string().contains("connecting to anvil-zksync"), "{err}");
+    }
+
+    #[test]
+    fn post_errors_on_an_unparseable_port() {
+        let mut chain = chain_on(0);
+        chain.rpc = "http://127.0.0.1:notaport".into();
+        let err = post(&chain, "{}").unwrap_err();
+        assert!(err.to_string().contains("invalid port"), "{err}");
+    }
+
+    #[test]
+    fn call_extracts_the_result_value() {
+        let resp: &'static str =
+            Box::leak(ok_response(r#"{"jsonrpc":"2.0","id":1,"result":"0x104"}"#).into_boxed_str());
+        let port = spawn_mock(resp);
+        let out = call(&chain_on(port), "eth_chainId", serde_json::json!([])).unwrap();
+        assert_eq!(out, Value::String("0x104".into()));
+    }
+
+    #[test]
+    fn call_returns_null_when_there_is_no_result() {
+        let resp: &'static str =
+            Box::leak(ok_response(r#"{"jsonrpc":"2.0","id":1}"#).into_boxed_str());
+        let port = spawn_mock(resp);
+        let out = call(&chain_on(port), "eth_chainId", serde_json::json!([])).unwrap();
+        assert_eq!(out, Value::Null);
     }
 }
