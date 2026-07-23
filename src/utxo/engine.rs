@@ -167,14 +167,13 @@ impl Engine for UtxoEngine {
     }
 
     fn explorer_target(&self) -> Option<ExplorerTarget> {
-        // btc-rpc-explorer is Bitcoin-only (the published image ships no Litecoin
-        // coin config), so only Bitcoin gets a bundled explorer. Unlike Otterscan,
-        // it makes its RPC calls server-side, so it reaches bitcoind over the
-        // docker network via the chain's service name + internal RPC port.
-        if self.coin.kind != "bitcoin" {
-            return None;
-        }
-        Some(ExplorerTarget::BtcRpc {
+        // Both coins get a btc-rpc-explorer-family explorer: btc-rpc-explorer for
+        // Bitcoin, its ltc-rpc-explorer fork for Litecoin (the orchestrator picks
+        // the image and env-var flavor from `coin`). Unlike Otterscan, it makes
+        // its RPC calls server-side, so it reaches the daemon over the docker
+        // network via the chain's service name + internal RPC port.
+        Some(ExplorerTarget::UtxoRpc {
+            coin: self.coin.kind,
             chain_name: self.name.clone(),
             rpc_service: self.name.clone(),
             rpc_port: self.coin.rpc_port,
@@ -302,28 +301,29 @@ mod tests {
     }
 
     #[test]
-    fn only_bitcoin_exposes_an_explorer_target() {
-        // btc-rpc-explorer is BTC-only, so Bitcoin gets an explorer wired to its
-        // in-network RPC (service name + internal port) and Litecoin gets none.
-        match UtxoEngine::new(BITCOIN, "bitcoin-1", 18443).explorer_target() {
-            Some(ExplorerTarget::BtcRpc {
-                chain_name,
-                rpc_service,
-                rpc_port,
-                ..
-            }) => {
-                assert_eq!(chain_name, "bitcoin-1");
-                assert_eq!(rpc_service, "bitcoin-1");
-                assert_eq!(rpc_port, 18443);
+    fn both_coins_expose_a_utxo_rpc_explorer_target() {
+        // Both coins get a btc-rpc-explorer-family explorer wired to their
+        // in-network RPC (service name + internal port); `coin` selects the image.
+        for (coin, name, port) in [
+            (BITCOIN, "bitcoin-1", 18443),
+            (LITECOIN, "litecoin-1", 19443),
+        ] {
+            match UtxoEngine::new(coin, name, port).explorer_target() {
+                Some(ExplorerTarget::UtxoRpc {
+                    coin: coin_kind,
+                    chain_name,
+                    rpc_service,
+                    rpc_port,
+                    ..
+                }) => {
+                    assert_eq!(coin_kind, coin.kind);
+                    assert_eq!(chain_name, name);
+                    assert_eq!(rpc_service, name);
+                    assert_eq!(rpc_port, port);
+                }
+                other => panic!("{name} should expose a UtxoRpc explorer, got {other:?}"),
             }
-            other => panic!("bitcoin should expose a BtcRpc explorer, got {other:?}"),
         }
-        assert!(
-            UtxoEngine::new(LITECOIN, "litecoin-1", 19443)
-                .explorer_target()
-                .is_none(),
-            "litecoin ships no explorer"
-        );
     }
 
     #[test]
@@ -492,6 +492,7 @@ mod tests {
     const BTC_PERSIST_PORT: u16 = 28444;
     const LTC_PERSIST_PORT: u16 = 29444;
     const BTC_UI_E2E_PORT: u16 = 28445;
+    const LTC_UI_E2E_PORT: u16 = 29445;
 
     /// GET `path` on `127.0.0.1:port` and return the HTTP status code (0 on a
     /// connection/parse failure, so a not-yet-listening explorer just reads as
@@ -537,42 +538,48 @@ mod tests {
         assert_boots_funded_and_faucets(&net, "LTC");
     }
 
-    /// With the explorer on, a btc-rpc-explorer container boots alongside Bitcoin,
-    /// connects to bitcoind over the docker network, and serves its UI on the
-    /// first explorer host port — advertised in the manifest. It connects a few
-    /// seconds after the chain is ready (a separate container doing server-side
-    /// RPC), so poll rather than assume an immediate 200. Litecoin has no explorer
-    /// (the image is BTC-only), so this covers Bitcoin only. Self-skips w/o Docker.
+    /// With explorers on, each UTXO chain boots its btc-rpc-explorer-family
+    /// container (btc-rpc-explorer for Bitcoin, the ltc-rpc-explorer fork for
+    /// Litecoin), which connects to the daemon over the docker network and serves
+    /// its UI — advertised in the manifest. Both are booted in one localnet so
+    /// their explorers take consecutive host ports (5100/5101) rather than racing
+    /// on the same one. The explorer connects a few seconds after the chain is
+    /// ready (a separate container doing server-side RPC), so poll rather than
+    /// assume an immediate 200; Litecoin's image is amd64-only, so under emulation
+    /// it needs a wider window. Self-skips without Docker.
     #[test]
-    fn bitcoin_serves_the_btc_rpc_explorer() {
+    fn utxo_chains_serve_their_explorers() {
         if !docker_available() {
-            eprintln!("skipping btc-rpc-explorer e2e: docker unavailable");
+            eprintln!("skipping utxo explorer e2e: docker unavailable");
             return;
         }
-        let net = Localnet::boot_bitcoin_ui("t-bitcoin-ui", BTC_UI_E2E_PORT);
-
-        // The explorer is the first (only) one booted, so it lands on the base
-        // explorer port. Poll for it to finish connecting to bitcoind.
-        let explorer_port = 5100;
-        let mut last = 0;
-        for _ in 0..30 {
-            last = http_status(explorer_port, "/");
-            if last == 200 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-        assert_eq!(last, 200, "btc-rpc-explorer should serve its UI");
-
-        // A block page renders regtest data (chain wired through correctly).
-        assert_eq!(http_status(explorer_port, "/block-height/0"), 200);
-
-        // ...and the manifest advertises exactly that URL, so tooling can find it.
+        let net = Localnet::boot_utxo_ui(BTC_UI_E2E_PORT, LTC_UI_E2E_PORT);
         let manifest = Manifest::read(&manifest_path(net.base())).unwrap();
-        assert_eq!(
-            manifest.chains[0].explorer.as_deref(),
-            Some(format!("http://127.0.0.1:{explorer_port}").as_str())
-        );
+
+        // bitcoin-1 → 5100, litecoin-1 → 5101 (assigned in config/engine order).
+        for (name, port, wait_secs) in [("bitcoin-1", 5100u16, 30u32), ("litecoin-1", 5101, 90)] {
+            let mut last = 0;
+            for _ in 0..wait_secs {
+                last = http_status(port, "/");
+                if last == 200 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            assert_eq!(last, 200, "{name} explorer should serve its UI");
+            // A block page renders regtest data (chain wired through correctly).
+            assert_eq!(
+                http_status(port, "/block-height/0"),
+                200,
+                "{name} block page should render"
+            );
+            // ...and the manifest advertises exactly that URL.
+            let chain = manifest.chains.iter().find(|c| c.name == name).unwrap();
+            assert_eq!(
+                chain.explorer.as_deref(),
+                Some(format!("http://127.0.0.1:{port}").as_str())
+            );
+        }
     }
 
     /// The datadir is bind-mounted in persistent mode, so chain state must

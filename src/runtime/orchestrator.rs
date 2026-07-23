@@ -35,12 +35,19 @@ const OTTERSCAN_IMAGE: &str = "otterscan/otterscan:v2.11.0";
 /// Compose service template for an Otterscan explorer.
 const OTTERSCAN_SERVICE_TEMPLATE: &str = include_str!("../resources/docker/services/otterscan.yml");
 /// Pinned btc-rpc-explorer image — the UTXO analogue of Otterscan. It connects
-/// straight to bitcoind over RPC (no electrs/indexer/DB). BTC-only, so it backs
-/// Bitcoin chains but not Litecoin.
+/// straight to bitcoind over RPC (no electrs/indexer/DB).
 const BTC_RPC_EXPLORER_IMAGE: &str = "getumbrel/btc-rpc-explorer:v3.4.0";
-/// Compose service template for a btc-rpc-explorer.
+/// Compose service template for a btc-rpc-explorer (Bitcoin).
 const BTC_RPC_EXPLORER_TEMPLATE: &str =
     include_str!("../resources/docker/services/btc-rpc-explorer.yml");
+/// Pinned ltc-rpc-explorer image — a maintained Litecoin fork of btc-rpc-explorer
+/// (same server-side RPC, no indexer/DB). Pinned by digest because the fork only
+/// publishes a rolling `latest` tag; this digest is `3.6.2-ltc`. amd64-only, so
+/// the compose template runs it under `linux/amd64` (emulated on arm64 hosts).
+const LTC_RPC_EXPLORER_IMAGE: &str = "techtoshi/ltc-rpc-explorer@sha256:067b7606bf22c719500e074f565ba389e4197b392756e52031e1de9da8617fb8";
+/// Compose service template for an ltc-rpc-explorer (Litecoin).
+const LTC_RPC_EXPLORER_TEMPLATE: &str =
+    include_str!("../resources/docker/services/ltc-rpc-explorer.yml");
 /// First host port for explorers; each subsequent chain's explorer takes the next.
 const EXPLORER_BASE_PORT: u16 = 5100;
 
@@ -150,9 +157,11 @@ enum ExplorerRender {
         config_rel_path: String,
         config_json: String,
     },
-    /// btc-rpc-explorer: configured entirely via env vars (server-side RPC), so
-    /// there is no mounted config file to stage.
-    BtcRpc {
+    /// A btc-rpc-explorer-family explorer (Bitcoin or Litecoin): configured
+    /// entirely via env vars (server-side RPC), so there is no mounted config
+    /// file to stage. `coin` selects the image and env-var flavor at render time.
+    UtxoRpc {
+        coin: &'static str,
         rpc_service: String,
         rpc_port: u16,
         rpc_user: String,
@@ -194,7 +203,8 @@ fn explorer_services(engines: &[Box<dyn Engine>]) -> Vec<ExplorerService> {
                     chain_name,
                 }
             }
-            ExplorerTarget::BtcRpc {
+            ExplorerTarget::UtxoRpc {
+                coin,
                 chain_name,
                 rpc_service,
                 rpc_port,
@@ -204,7 +214,8 @@ fn explorer_services(engines: &[Box<dyn Engine>]) -> Vec<ExplorerService> {
                 service_name: format!("explorer-{chain_name}"),
                 host_port,
                 url: format!("http://127.0.0.1:{host_port}"),
-                render: ExplorerRender::BtcRpc {
+                render: ExplorerRender::UtxoRpc {
+                    coin,
                     rpc_service,
                     rpc_port,
                     rpc_user,
@@ -253,19 +264,28 @@ fn render_explorer_service(svc: &ExplorerService) -> String {
             .replace("{{IMAGE}}", OTTERSCAN_IMAGE)
             .replace("{{HOST_PORT}}", &svc.host_port.to_string())
             .replace("{{CONFIG_FILE}}", config_file),
-        ExplorerRender::BtcRpc {
+        ExplorerRender::UtxoRpc {
+            coin,
             rpc_service,
             rpc_port,
             rpc_user,
             rpc_pass,
-        } => BTC_RPC_EXPLORER_TEMPLATE
-            .replace("{{NAME}}", &svc.service_name)
-            .replace("{{IMAGE}}", BTC_RPC_EXPLORER_IMAGE)
-            .replace("{{HOST_PORT}}", &svc.host_port.to_string())
-            .replace("{{RPC_SERVICE}}", rpc_service)
-            .replace("{{RPC_PORT}}", &rpc_port.to_string())
-            .replace("{{RPC_USER}}", rpc_user)
-            .replace("{{RPC_PASS}}", rpc_pass),
+        } => {
+            // Litecoin uses the ltc-rpc-explorer fork (its own image + template);
+            // Bitcoin uses btc-rpc-explorer. Both share the same placeholders.
+            let (image, template) = match *coin {
+                "litecoin" => (LTC_RPC_EXPLORER_IMAGE, LTC_RPC_EXPLORER_TEMPLATE),
+                _ => (BTC_RPC_EXPLORER_IMAGE, BTC_RPC_EXPLORER_TEMPLATE),
+            };
+            template
+                .replace("{{NAME}}", &svc.service_name)
+                .replace("{{IMAGE}}", image)
+                .replace("{{HOST_PORT}}", &svc.host_port.to_string())
+                .replace("{{RPC_SERVICE}}", rpc_service)
+                .replace("{{RPC_PORT}}", &rpc_port.to_string())
+                .replace("{{RPC_USER}}", rpc_user)
+                .replace("{{RPC_PASS}}", rpc_pass)
+        }
     }
 }
 
@@ -828,9 +848,9 @@ mod tests {
     #[test]
     fn explorer_services_are_assigned_ports_and_configs_per_chain() {
         let svcs = explorer_services(&engines());
-        // One Otterscan per EVM chain, plus a btc-rpc-explorer for the Bitcoin
-        // chain (Litecoin gets none). Ports are handed out in engine order.
-        assert_eq!(svcs.len(), 3);
+        // One Otterscan per EVM chain, plus a btc-rpc-explorer-family explorer for
+        // each UTXO chain (Bitcoin + Litecoin). Ports are handed out in engine order.
+        assert_eq!(svcs.len(), 4);
 
         assert_eq!(svcs[0].service_name, "explorer-anvil-1");
         assert_eq!(svcs[0].host_port, 5100);
@@ -857,20 +877,39 @@ mod tests {
             _ => panic!("anvil-2 should get an Otterscan explorer"),
         }
 
-        // The Bitcoin chain gets a btc-rpc-explorer wired to its in-network RPC
-        // (service name + internal port), not a published host port.
+        // Each UTXO chain gets a btc-rpc-explorer-family explorer wired to its
+        // in-network RPC (service name + internal port), not a published host port.
+        // `coin` picks the image (btc-rpc-explorer vs the ltc-rpc-explorer fork).
         assert_eq!(svcs[2].service_name, "explorer-bitcoin-1");
         assert_eq!(svcs[2].host_port, 5102);
         match &svcs[2].render {
-            ExplorerRender::BtcRpc {
+            ExplorerRender::UtxoRpc {
+                coin,
                 rpc_service,
                 rpc_port,
                 ..
             } => {
+                assert_eq!(*coin, "bitcoin");
                 assert_eq!(rpc_service, "bitcoin-1");
                 assert_eq!(*rpc_port, 18443);
             }
-            _ => panic!("bitcoin-1 should get a btc-rpc-explorer"),
+            _ => panic!("bitcoin-1 should get a UtxoRpc explorer"),
+        }
+
+        assert_eq!(svcs[3].service_name, "explorer-litecoin-1");
+        assert_eq!(svcs[3].host_port, 5103);
+        match &svcs[3].render {
+            ExplorerRender::UtxoRpc {
+                coin,
+                rpc_service,
+                rpc_port,
+                ..
+            } => {
+                assert_eq!(*coin, "litecoin");
+                assert_eq!(rpc_service, "litecoin-1");
+                assert_eq!(*rpc_port, 19443);
+            }
+            _ => panic!("litecoin-1 should get a UtxoRpc explorer"),
         }
     }
 

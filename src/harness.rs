@@ -115,23 +115,27 @@ impl Localnet {
         )
     }
 
-    /// Like [`boot_bitcoin`](Self::boot_bitcoin) but with the explorer on, so a
-    /// btc-rpc-explorer container is booted alongside and published on the first
-    /// explorer host port (`EXPLORER_BASE_PORT`).
-    pub(crate) fn boot_bitcoin_ui(chain: &str, port: u16) -> Localnet {
-        Self::boot_with_config_explorer(
-            chain,
-            &format!("[[chains]]\nname = \"{chain}\"\nkind = \"bitcoin\"\nport = {port}\n"),
-            true,
-        )
-    }
-
     /// Boot one litecoind regtest chain named `chain` on host `port`, isolated
     /// under its own temp dir and compose project. Panics on failure.
     pub(crate) fn boot_litecoin(chain: &str, port: u16) -> Localnet {
         Self::boot_with_config(
             chain,
             &format!("[[chains]]\nname = \"{chain}\"\nkind = \"litecoin\"\nport = {port}\n"),
+        )
+    }
+
+    /// Boot a Bitcoin + Litecoin regtest pair with explorers on, in one isolated
+    /// localnet. Their explorers land on consecutive host ports (`bitcoin-1` on
+    /// `EXPLORER_BASE_PORT`, `litecoin-1` on the next), so booting both together
+    /// keeps the two off the same host port. Panics on failure.
+    pub(crate) fn boot_utxo_ui(btc_port: u16, ltc_port: u16) -> Localnet {
+        Self::boot_with_config_explorer(
+            "utxo-ui",
+            &format!(
+                "[[chains]]\nname = \"bitcoin-1\"\nkind = \"bitcoin\"\nport = {btc_port}\n\n\
+                 [[chains]]\nname = \"litecoin-1\"\nkind = \"litecoin\"\nport = {ltc_port}\n"
+            ),
+            true,
         )
     }
 
